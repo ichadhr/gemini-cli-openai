@@ -127,7 +127,7 @@ export class GeminiApiClient {
 			throw new Error("Project ID discovery failed. Please set the GEMINI_PROJECT_ID environment variable.");
 		} catch (error: unknown) {
 			const errorMessage = error instanceof Error ? error.message : String(error);
-			console.error(`Failed to discover project ID for account ${authManager.id}:`, errorMessage);
+			console.error(`Failed to discover project ID for GCP_SERVICE_ACCOUNT_${authManager.id}:`, errorMessage);
 			throw new Error(
 				"Could not discover project ID. Make sure you're authenticated and consider setting GEMINI_PROJECT_ID."
 			);
@@ -324,6 +324,7 @@ export class GeminiApiClient {
 		// Get account ONCE for this request to ensure consistency
 		const authManager = await this.multiAccountManager.getAccount();
 		await authManager.initializeAuth();
+		console.log(`Using GCP_SERVICE_ACCOUNT_${authManager.id} for request`);
 		const projectId = await this.discoverProjectId(authManager);
 
 		const contents = messages.map((msg) => this.messageToGeminiFormat(msg));
@@ -558,7 +559,7 @@ export class GeminiApiClient {
 
 			// Handle Rate Limits (429/503): Report failure and switch account
 			if (response.status === 429 || response.status === 503) {
-				console.log(`Got ${response.status} error, reporting failure and rotating account...`);
+				console.log(`Got ${response.status} error on GCP_SERVICE_ACCOUNT_${authManager.id}, reporting failure and rotating...`);
 				await this.multiAccountManager.reportFailure(authManager, response.status);
 
 				// Retry with next account if we haven't tried too many times (e.g., 3 * number of accounts)
@@ -571,6 +572,8 @@ export class GeminiApiClient {
 
 					// Get a NEW account for retry
 					const nextAuthManager = await this.multiAccountManager.getAccount();
+					console.log(`Using GCP_SERVICE_ACCOUNT_${nextAuthManager.id} for retry`);
+
 					// We might need to update the project ID in the request if the new account uses a different project!
 					// This is complex. For now, we assume if we switch accounts, we might fail again on 403 if project mismatch.
 					// Ideally we should re-discover project ID for nextAuthManager and update streamRequest.project

@@ -16,6 +16,7 @@ Transform Google's Gemini models into OpenAI-compatible endpoints using Cloudfla
 - 🌐 **Third-party Integration** - Compatible with Open WebUI, ChatGPT clients, and more
 - ⚡ **Cloudflare Workers** - Global edge deployment with low latency
 - 🔄 **Smart Token Caching** - Intelligent token management with KV storage
+- 🔋 **Multi-Account Support** - High availability with automatic rotation and rate limit handling
 - 🆓 **Free Tier Access** - Leverage Google's free tier through Code Assist API
 - 📡 **Real-time Streaming** - Server-sent events for live responses with token usage
 - 🎭 **Multiple Models** - Access to latest Gemini models including experimental ones
@@ -35,7 +36,7 @@ Transform Google's Gemini models into OpenAI-compatible endpoints using Cloudfla
 > **Thinking support** has two modes:
 > - **Fake thinking**: Set `ENABLE_FAKE_THINKING=true` to generate synthetic reasoning text (good for testing)
 > - **Real thinking**: Set `ENABLE_REAL_THINKING=true` to use Gemini's native reasoning capabilities
-> 
+>
 > Real thinking is controlled entirely by the `ENABLE_REAL_THINKING` environment variable. You can optionally set a `"thinking_budget"` in your request (token limit for reasoning, -1 for dynamic allocation, 0 to disable thinking entirely).
 
 - **Reasoning Effort Support**: You can control the reasoning effort of thinking models by including `reasoning_effort` in the request body (e.g., `extra_body` or `model_params`). This parameter allows you to fine-tune the model's internal reasoning process, balancing between speed and depth of thought.
@@ -43,7 +44,7 @@ Transform Google's Gemini models into OpenAI-compatible endpoints using Cloudfla
   - `low`: Sets `thinking_budget = 1024`.
   - `medium`: Sets `thinking_budget = 12288` for flash models, `16384` for other models.
   - `high`: Sets `thinking_budget = 24576` for flash models, `32768` for other models.
-> 
+>
 > Set `STREAM_THINKING_AS_CONTENT=true` to stream reasoning as content with `<thinking>` tags (DeepSeek R1 style) instead of using the reasoning field.
 
 ## �🛠️ Setup
@@ -70,18 +71,18 @@ You need OAuth2 credentials from a Google account that has accessed Gemini. The 
    gemini
    ```
 3. **Authenticate with Google**:
-   
+
    Select `● Login with Google`.
-   
+
    A browser window will now open prompting you to login with your Google account.
-   
+
 4. **Locate the credentials file**:
-   
+
    **Windows:**
    ```
    C:\Users\USERNAME\.gemini\oauth_creds.json
    ```
-   
+
    **macOS/Linux:**
    ```
    ~/.gemini/oauth_creds.json
@@ -120,7 +121,13 @@ kv_namespaces = [
 Create a `.dev.vars` file:
 ```bash
 # Required: OAuth2 credentials JSON from Gemini CLI authentication
-GCP_SERVICE_ACCOUNT={"access_token":"ya29...","refresh_token":"1//...","scope":"...","token_type":"Bearer","id_token":"eyJ...","expiry_date":1750927763467}
+# Single Account Mode:
+# GCP_SERVICE_ACCOUNT={"access_token":"ya29...","refresh_token":"1//...","scope":"...","token_type":"Bearer","id_token":"eyJ...","expiry_date":1750927763467}
+
+# Multi-Account Mode (Recommended for higher throughput):
+GCP_SERVICE_ACCOUNT_0={"access_token":"ya29...","refresh_token":"1//...","scope":"...","token_type":"Bearer","id_token":"eyJ...","expiry_date":1750927763467}
+GCP_SERVICE_ACCOUNT_1={"access_token":"ya29...","refresh_token":"1//...","scope":"...","token_type":"Bearer","id_token":"eyJ...","expiry_date":1750927763467}
+# Add as many accounts as needed (GCP_SERVICE_ACCOUNT_2, etc.)
 
 # Optional: Google Cloud Project ID (auto-discovered if not set)
 # GEMINI_PROJECT_ID=your-project-id
@@ -400,10 +407,10 @@ const decoder = new TextDecoder();
 while (true) {
   const { done, value } = await reader.read();
   if (done) break;
-  
+
   const chunk = decoder.decode(value);
   const lines = chunk.split('\n');
-  
+
   for (const line of lines) {
     if (line.startsWith('data: ') && line !== 'data: [DONE]') {
       const data = JSON.parse(line.substring(6));
@@ -493,7 +500,7 @@ Configure Gemini's built-in safety filters using environment variables in the de
 ```bash
 # Safety threshold options: BLOCK_NONE, BLOCK_FEW, BLOCK_SOME, BLOCK_ONLY_HIGH, HARM_BLOCK_THRESHOLD_UNSPECIFIED
 GEMINI_MODERATION_HARASSMENT_THRESHOLD=BLOCK_NONE
-GEMINI_MODERATION_HATE_SPEECH_THRESHOLD=BLOCK_NONE  
+GEMINI_MODERATION_HATE_SPEECH_THRESHOLD=BLOCK_NONE
 GEMINI_MODERATION_SEXUALLY_EXPLICIT_THRESHOLD=BLOCK_SOME
 GEMINI_MODERATION_DANGEROUS_CONTENT_THRESHOLD=BLOCK_ONLY_HIGH
 ```
@@ -544,7 +551,7 @@ Content-Type: application/json
       "content": "You are a helpful assistant."
     },
     {
-      "role": "user", 
+      "role": "user",
       "content": "Hello! How are you?"
     }
   ]
@@ -562,7 +569,7 @@ Content-Type: application/json
   "model": "gemini-2.5-pro",
   "messages": [
     {
-      "role": "user", 
+      "role": "user",
       "content": "Solve this math problem step by step: What is 15% of 240?"
     }
   ],
@@ -608,7 +615,7 @@ The worker supports multimodal conversations with images for vision-capable mode
 
 #### Vision-Capable Models
 - `gemini-2.5-pro`
-- `gemini-2.5-flash` 
+- `gemini-2.5-flash`
 - `gemini-2.0-flash-001`
 - `gemini-2.0-flash-lite-preview-02-05`
 - `gemini-2.0-pro-exp-02-05`

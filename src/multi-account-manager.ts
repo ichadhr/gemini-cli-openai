@@ -30,7 +30,7 @@ export class MultiAccountManager {
                 const credentials = JSON.parse(credentialsJson) as OAuth2Credentials;
                 this.addAccount(index, credentials);
             } catch (e) {
-                console.error(`Failed to parse credentials for account ${index}:`, e);
+                console.error(`Failed to parse credentials for GCP_SERVICE_ACCOUNT_${index}:`, e);
             }
             index++;
         }
@@ -60,41 +60,64 @@ export class MultiAccountManager {
 
     /**
      * Get a healthy account to use.
-     * Rotates through accounts using round-robin.
+     * Rotates through accounts using persistent round-robin via KV.
      */
     public async getAccount(): Promise<AuthManager> {
         if (this.accounts.length === 0) {
             throw new Error("No service accounts configured");
         }
 
-        const startIndex = this.currentAccountIndex;
+        // Try to get rotation index from KV for persistent round-robin
+        // We do this optimistically to not block too much, but for sequence we need to read it.
+        // Default to random start if KV fails or is empty, to prevent "always 0" issue if KV is down.
+        let currentIndex = this.currentAccountIndex;
+
+        try {
+            const kvIndex = await this.env.GEMINI_CLI_KV.get("account_rotation_index");
+            if (kvIndex !== null) {
+                currentIndex = parseInt(kvIndex, 10);
+            }
+        } catch (e) {
+            console.warn("Failed to read rotation index from KV, using local/random index", e);
+        }
+
+        // Normalize index
+        if (isNaN(currentIndex) || currentIndex < 0) currentIndex = 0;
+        currentIndex = currentIndex % this.accounts.length;
+
+        const startIndex = currentIndex;
         let attempts = 0;
 
         while (attempts < this.accounts.length) {
-            const account = this.accounts[this.currentAccountIndex];
-            // The AuthManager has an 'id' property we will add
+            const account = this.accounts[currentIndex];
             const accountId = (account as any).id;
 
             if (await this.healthTracker.isAccountHealthy(accountId)) {
-                // Move index for next time (round-robin)
-                this.rotateIndex();
+                // Found a healthy account. Update the global rotation index for the NEXT request.
+                // We increment by 1 and save.
+                const nextIndex = (currentIndex + 1) % this.accounts.length;
+
+                // Fire-and-forget update to KV (using waitUntil if available in context, but here we just don't await)
+                // Note: In strict Cloudflare Workers, we should use ctx.waitUntil, but we don't have ctx here.
+                // Awaiting it adds latency (~10-50ms). Given the user wants "sequence", we accept this small cost
+                // or we just float it. "await" is safer to ensure it writes.
+                try {
+                    // We await it to ensure sequence is respected for immediate next request
+                    await this.env.GEMINI_CLI_KV.put("account_rotation_index", nextIndex.toString());
+                } catch (e) {
+                    console.error("Failed to update rotation index in KV", e);
+                }
+
                 return account;
             }
 
-            console.log(`Skipping unhealthy account ${accountId}`);
-            this.rotateIndex();
+            console.log(`Skipping unhealthy GCP_SERVICE_ACCOUNT_${accountId}`);
+            currentIndex = (currentIndex + 1) % this.accounts.length;
             attempts++;
         }
 
-        // If all accounts are unhealthy, return the one that expires soonest?
-        // Or just return the "next" one and hope for the best / let it fail to enforce backoff?
-        // Returning the next one (original start) allows the caller to hit the rate limit and verify it's still bad.
         console.warn("All accounts appear unhealthy or rate limited. Returning next available account.");
         return this.accounts[startIndex];
-    }
-
-    private rotateIndex() {
-        this.currentAccountIndex = (this.currentAccountIndex + 1) % this.accounts.length;
     }
 
     /**

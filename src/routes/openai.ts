@@ -145,17 +145,6 @@ OpenAIRoute.post("/chat/completions", async (c) => {
 		const multiAccountManager = new MultiAccountManager(c.env);
 		const geminiClient = new GeminiApiClient(c.env, multiAccountManager);
 
-		// Test authentication first (using the first available healthy account)
-		try {
-			const authManager = await multiAccountManager.getAccount();
-			await authManager.initializeAuth();
-			console.log(`Authentication successful (using account ${authManager.id})`);
-		} catch (authError: unknown) {
-			const errorMessage = authError instanceof Error ? authError.message : String(authError);
-			console.error("Authentication failed:", errorMessage);
-			return c.json({ error: "Authentication failed: " + errorMessage }, 401);
-		}
-
 		if (stream) {
 			// Streaming response
 			const { readable, writable } = new TransformStream();
