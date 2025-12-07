@@ -41,6 +41,19 @@ interface GeminiResponse {
 	};
 }
 
+// Stream request type for Gemini API
+interface StreamRequest {
+	model: string;
+	project: string;
+	request: {
+		contents: unknown;
+		generationConfig: unknown;
+		tools: unknown;
+		toolConfig: unknown;
+		safetySettings?: unknown;
+	};
+}
+
 export interface GeminiPart {
 	text?: string;
 	thought?: boolean; // For real thinking chunks from Gemini
@@ -324,7 +337,7 @@ export class GeminiApiClient {
 		// Get account ONCE for this request to ensure consistency
 		const authManager = await this.multiAccountManager.getAccount();
 		await authManager.initializeAuth();
-		console.log(`Using GCP_SERVICE_ACCOUNT_${authManager.id} for request`);
+		console.log(`[Mitigation] Initial account selection: GCP_SERVICE_ACCOUNT_${authManager.id}`);
 		const projectId = await this.discoverProjectId(authManager);
 
 		const contents = messages.map((msg) => this.messageToGeminiFormat(msg));
@@ -516,7 +529,7 @@ export class GeminiApiClient {
 	 * Performs the actual stream request with retry logic for 401 errors and auto model switching for rate limits.
 	 */
 	private async *performStreamRequest(
-		streamRequest: unknown,
+		streamRequest: StreamRequest,
 		authManager: AuthManager, // Account is now passed in
 		needsThinkingClose: boolean = false,
 		isRetry: boolean = false,
@@ -527,6 +540,7 @@ export class GeminiApiClient {
 	): AsyncGenerator<StreamChunk> {
 		// Ensure auth is initialized (redundant but safe)
 		await authManager.initializeAuth();
+		console.log(`[Mitigation] Stream request attempt ${retryAttempt + 1} with account GCP_SERVICE_ACCOUNT_${authManager.id}${originalModel ? `, model: ${originalModel}` : ''}`);
 
 		const citationsProcessor = new CitationsProcessor(this.env);
 		const response = await fetch(`${CODE_ASSIST_ENDPOINT}/${CODE_ASSIST_API_VERSION}:streamGenerateContent?alt=sse`, {
@@ -541,7 +555,7 @@ export class GeminiApiClient {
 		if (!response.ok) {
 			// Handle 401: Clear token and retry with SAME account (refresh token flow) if not already retried
 			if (response.status === 401 && !isRetry) {
-				console.log("Got 401 error in stream request, clearing token cache and retrying...");
+				console.log(`[Mitigation] Sequence step: 401 error - Token refresh for GCP_SERVICE_ACCOUNT_${authManager.id}`);
 				await authManager.clearTokenCache();
 				await authManager.initializeAuth();
 				yield* this.performStreamRequest(
@@ -559,7 +573,7 @@ export class GeminiApiClient {
 
 			// Handle Rate Limits (429/503): Report failure and switch account
 			if (response.status === 429 || response.status === 503) {
-				console.log(`Got ${response.status} error on GCP_SERVICE_ACCOUNT_${authManager.id}, reporting failure and rotating...`);
+				console.log(`[Mitigation] Sequence step: Rate limit (${response.status}) - Account rotation initiated from GCP_SERVICE_ACCOUNT_${authManager.id}`);
 				await this.multiAccountManager.reportFailure(authManager, response.status);
 
 				// Retry with next account if we haven't tried too many times (e.g., 3 * number of accounts)
@@ -568,11 +582,9 @@ export class GeminiApiClient {
 
 
 				if (retryAttempt < maxRetries) {
-					console.log(`Retrying request with new account (Attempt ${retryAttempt + 1}/${maxRetries})`);
-
 					// Get a NEW account for retry
 					const nextAuthManager = await this.multiAccountManager.getAccount();
-					console.log(`Using GCP_SERVICE_ACCOUNT_${nextAuthManager.id} for retry`);
+					console.log(`[Mitigation] Account rotation: Attempt ${retryAttempt + 1}/${maxRetries} - Selected GCP_SERVICE_ACCOUNT_${nextAuthManager.id}`);
 
 					// We might need to update the project ID in the request if the new account uses a different project!
 					// This is complex. For now, we assume if we switch accounts, we might fail again on 403 if project mismatch.
@@ -591,8 +603,8 @@ export class GeminiApiClient {
 					}
 
 					// Update project in request if possible
-					if (nextProjectId && (streamRequest as any).project) {
-						(streamRequest as any).project = nextProjectId;
+					if (nextProjectId && streamRequest.project) {
+						streamRequest.project = nextProjectId;
 					}
 
 					yield* this.performStreamRequest(
@@ -614,16 +626,14 @@ export class GeminiApiClient {
 
 			// Handle rate limiting with auto model switching (only if we exhausted account retries or it's a different error)
 			// Note: We prioritize account rotation over model switching. Model switching is the last resort.
-			if (this.autoSwitchHelper.isRateLimitStatus(response.status) && !isRetry && originalModel) {
+			if (this.autoSwitchHelper.isRateLimitStatus(response.status) && !isRetry && originalModel && this.autoSwitchHelper.shouldAttemptFallback(originalModel)) {
 				const fallbackModel = this.autoSwitchHelper.getFallbackModel(originalModel);
 				if (fallbackModel && this.autoSwitchHelper.isEnabled()) {
-					console.log(
-						`Got ${response.status} error for model ${originalModel} (and exhausted account rotation), switching to fallback model: ${fallbackModel}`
-					);
+					console.log(`[Mitigation] Sequence step: Rate limit (${response.status}) - Model fallback from ${originalModel} to ${fallbackModel} (account rotation exhausted)`);
 
 					// Create new request with fallback model
-					const fallbackRequest = {
-						...(streamRequest as Record<string, unknown>),
+					const fallbackRequest: StreamRequest = {
+						...streamRequest,
 						model: fallbackModel
 					};
 
@@ -859,6 +869,7 @@ export class GeminiApiClient {
 		} catch (error: unknown) {
 			// Handle rate limiting for non-streaming requests
 			if (this.autoSwitchHelper.isRateLimitError(error)) {
+				console.log(`[Mitigation] Non-streaming rate limit detected - Attempting model fallback for ${modelId}`);
 				const fallbackResult = await this.autoSwitchHelper.handleNonStreamingFallback(
 					modelId,
 					systemPrompt,
