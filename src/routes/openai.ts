@@ -3,7 +3,7 @@ import { Env, ChatCompletionRequest, ChatCompletionResponse } from "../types";
 import { geminiCliModels, DEFAULT_MODEL, getAllModelIds } from "../models";
 import { OPENAI_MODEL_OWNER } from "../config";
 import { DEFAULT_THINKING_BUDGET } from "../constants";
-import { AuthManager } from "../auth";
+import { MultiAccountManager } from "../multi-account-manager";
 import { GeminiApiClient } from "../gemini-client";
 import { createOpenAIStreamTransformer } from "../stream-transformer";
 
@@ -142,13 +142,14 @@ OpenAIRoute.post("/chat/completions", async (c) => {
 		});
 
 		// Initialize services
-		const authManager = new AuthManager(c.env);
-		const geminiClient = new GeminiApiClient(c.env, authManager);
+		const multiAccountManager = new MultiAccountManager(c.env);
+		const geminiClient = new GeminiApiClient(c.env, multiAccountManager);
 
-		// Test authentication first
+		// Test authentication first (using the first available healthy account)
 		try {
+			const authManager = await multiAccountManager.getAccount();
 			await authManager.initializeAuth();
-			console.log("Authentication successful");
+			console.log(`Authentication successful (using account ${authManager.id})`);
 		} catch (authError: unknown) {
 			const errorMessage = authError instanceof Error ? authError.message : String(authError);
 			console.error("Authentication failed:", errorMessage);

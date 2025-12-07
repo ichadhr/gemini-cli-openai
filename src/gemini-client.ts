@@ -10,6 +10,7 @@ import {
 	GeminiFunctionCall
 } from "./types";
 import { AuthManager } from "./auth";
+import { MultiAccountManager } from "./multi-account-manager";
 import { CODE_ASSIST_ENDPOINT, CODE_ASSIST_API_VERSION } from "./config";
 import { REASONING_MESSAGES, REASONING_CHUNK_DELAY, THINKING_CONTENT_CHUNK_SIZE } from "./constants";
 import { geminiCliModels } from "./models";
@@ -90,42 +91,43 @@ function isTextContent(content: MessageContent): content is TextContent {
  */
 export class GeminiApiClient {
 	private env: Env;
-	private authManager: AuthManager;
-	private projectId: string | null = null;
+	private multiAccountManager: MultiAccountManager;
+	private projectIds: Map<number, string> = new Map();
 	private autoSwitchHelper: AutoModelSwitchingHelper;
 
-	constructor(env: Env, authManager: AuthManager) {
+	constructor(env: Env, multiAccountManager: MultiAccountManager) {
 		this.env = env;
-		this.authManager = authManager;
+		this.multiAccountManager = multiAccountManager;
 		this.autoSwitchHelper = new AutoModelSwitchingHelper(env);
 	}
 
 	/**
 	 * Discovers the Google Cloud project ID. Uses the environment variable if provided.
 	 */
-	public async discoverProjectId(): Promise<string> {
+	public async discoverProjectId(authManager: AuthManager): Promise<string> {
 		if (this.env.GEMINI_PROJECT_ID) {
 			return this.env.GEMINI_PROJECT_ID;
 		}
-		if (this.projectId) {
-			return this.projectId;
+		if (this.projectIds.has(authManager.id)) {
+			return this.projectIds.get(authManager.id)!;
 		}
 
 		try {
 			const initialProjectId = "default-project";
-			const loadResponse = (await this.authManager.callEndpoint("loadCodeAssist", {
+
+			const loadResponse = (await authManager.callEndpoint("loadCodeAssist", {
 				cloudaicompanionProject: initialProjectId,
 				metadata: { duetProject: initialProjectId }
 			})) as ProjectDiscoveryResponse;
 
 			if (loadResponse.cloudaicompanionProject) {
-				this.projectId = loadResponse.cloudaicompanionProject;
+				this.projectIds.set(authManager.id, loadResponse.cloudaicompanionProject);
 				return loadResponse.cloudaicompanionProject;
 			}
 			throw new Error("Project ID discovery failed. Please set the GEMINI_PROJECT_ID environment variable.");
 		} catch (error: unknown) {
 			const errorMessage = error instanceof Error ? error.message : String(error);
-			console.error("Failed to discover project ID:", errorMessage);
+			console.error(`Failed to discover project ID for account ${authManager.id}:`, errorMessage);
 			throw new Error(
 				"Could not discover project ID. Make sure you're authenticated and consider setting GEMINI_PROJECT_ID."
 			);
@@ -319,8 +321,10 @@ export class GeminiApiClient {
 			};
 		} & NativeToolsRequestParams
 	): AsyncGenerator<StreamChunk> {
-		await this.authManager.initializeAuth();
-		const projectId = await this.discoverProjectId();
+		// Get account ONCE for this request to ensure consistency
+		const authManager = await this.multiAccountManager.getAccount();
+		await authManager.initializeAuth();
+		const projectId = await this.discoverProjectId(authManager);
 
 		const contents = messages.map((msg) => this.messageToGeminiFormat(msg));
 
@@ -403,6 +407,7 @@ export class GeminiApiClient {
 
 		yield* this.performStreamRequest(
 			streamRequest,
+			authManager, // Pass the selected account
 			needsThinkingClose,
 			false,
 			includeReasoning && streamThinkingAsContent,
@@ -511,44 +516,106 @@ export class GeminiApiClient {
 	 */
 	private async *performStreamRequest(
 		streamRequest: unknown,
+		authManager: AuthManager, // Account is now passed in
 		needsThinkingClose: boolean = false,
 		isRetry: boolean = false,
 		realThinkingAsContent: boolean = false,
 		originalModel?: string,
-		nativeToolsManager?: NativeToolsManager
+		nativeToolsManager?: NativeToolsManager,
+		retryAttempt: number = 0
 	): AsyncGenerator<StreamChunk> {
+		// Ensure auth is initialized (redundant but safe)
+		await authManager.initializeAuth();
+
 		const citationsProcessor = new CitationsProcessor(this.env);
 		const response = await fetch(`${CODE_ASSIST_ENDPOINT}/${CODE_ASSIST_API_VERSION}:streamGenerateContent?alt=sse`, {
 			method: "POST",
 			headers: {
 				"Content-Type": "application/json",
-				Authorization: `Bearer ${this.authManager.getAccessToken()}`
+				Authorization: `Bearer ${authManager.getAccessToken()}`
 			},
 			body: JSON.stringify(streamRequest)
 		});
 
 		if (!response.ok) {
+			// Handle 401: Clear token and retry with SAME account (refresh token flow) if not already retried
 			if (response.status === 401 && !isRetry) {
 				console.log("Got 401 error in stream request, clearing token cache and retrying...");
-				await this.authManager.clearTokenCache();
-				await this.authManager.initializeAuth();
+				await authManager.clearTokenCache();
+				await authManager.initializeAuth();
 				yield* this.performStreamRequest(
 					streamRequest,
+					authManager, // Same account
 					needsThinkingClose,
 					true,
 					realThinkingAsContent,
 					originalModel,
-					nativeToolsManager
-				); // Retry once
+					nativeToolsManager,
+					retryAttempt
+				); // Retry once with same account
 				return;
 			}
 
-			// Handle rate limiting with auto model switching
+			// Handle Rate Limits (429/503): Report failure and switch account
+			if (response.status === 429 || response.status === 503) {
+				console.log(`Got ${response.status} error, reporting failure and rotating account...`);
+				await this.multiAccountManager.reportFailure(authManager, response.status);
+
+				// Retry with next account if we haven't tried too many times (e.g., 3 * number of accounts)
+				// We use a safe upper bound to prevent infinite loops
+				const maxRetries = this.multiAccountManager.getAccountCount() * 3;
+
+
+				if (retryAttempt < maxRetries) {
+					console.log(`Retrying request with new account (Attempt ${retryAttempt + 1}/${maxRetries})`);
+
+					// Get a NEW account for retry
+					const nextAuthManager = await this.multiAccountManager.getAccount();
+					// We might need to update the project ID in the request if the new account uses a different project!
+					// This is complex. For now, we assume if we switch accounts, we might fail again on 403 if project mismatch.
+					// Ideally we should re-discover project ID for nextAuthManager and update streamRequest.project
+
+					// Simple fix: Recurse back to streamContent? No, we are inside performStreamRequest.
+					// We must allow performStreamRequest to switch accounts.
+
+					// If we switch accounts, we should probably check if project ID is different.
+					let nextProjectId = "";
+					try {
+						nextProjectId = await this.discoverProjectId(nextAuthManager);
+					} catch (e) {
+						console.error("Failed to get project for next account", e);
+						// Keep going?
+					}
+
+					// Update project in request if possible
+					if (nextProjectId && (streamRequest as any).project) {
+						(streamRequest as any).project = nextProjectId;
+					}
+
+					yield* this.performStreamRequest(
+						streamRequest,
+						nextAuthManager,
+						needsThinkingClose,
+						false, // Reset isRetry for 401s on new account
+						realThinkingAsContent,
+						originalModel,
+						nativeToolsManager,
+						retryAttempt + 1
+					);
+					return;
+				} else {
+					console.error("Max retries reached for rate limiting.");
+					// Fall through to auto model switching (if enabled) or error
+				}
+			}
+
+			// Handle rate limiting with auto model switching (only if we exhausted account retries or it's a different error)
+			// Note: We prioritize account rotation over model switching. Model switching is the last resort.
 			if (this.autoSwitchHelper.isRateLimitStatus(response.status) && !isRetry && originalModel) {
 				const fallbackModel = this.autoSwitchHelper.getFallbackModel(originalModel);
 				if (fallbackModel && this.autoSwitchHelper.isEnabled()) {
 					console.log(
-						`Got ${response.status} error for model ${originalModel}, switching to fallback model: ${fallbackModel}`
+						`Got ${response.status} error for model ${originalModel} (and exhausted account rotation), switching to fallback model: ${fallbackModel}`
 					);
 
 					// Create new request with fallback model
@@ -565,11 +632,13 @@ export class GeminiApiClient {
 
 					yield* this.performStreamRequest(
 						fallbackRequest,
+						authManager, // Keep same account for model switch
 						needsThinkingClose,
 						true,
 						realThinkingAsContent,
 						originalModel,
-						nativeToolsManager
+						nativeToolsManager,
+						retryAttempt // Keep retry count? or reset? Resetting is safer to try fresh on new model.
 					);
 					return;
 				}

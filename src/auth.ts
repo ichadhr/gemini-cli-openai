@@ -38,17 +38,32 @@ interface TokenCacheInfo {
 export class AuthManager {
 	private env: Env;
 	private accessToken: string | null = null;
+	public readonly id: number;
+	private credentials: OAuth2Credentials | null = null;
+	private kvTokenKey: string;
 
-	constructor(env: Env) {
+	constructor(env: Env, id: number = 0, credentials?: OAuth2Credentials) {
 		this.env = env;
+		this.id = id;
+		this.credentials = credentials || null;
+		this.kvTokenKey = `${KV_TOKEN_KEY}_${id}`;
 	}
 
 	/**
 	 * Initializes authentication using OAuth2 credentials with KV storage caching.
 	 */
 	public async initializeAuth(): Promise<void> {
-		if (!this.env.GCP_SERVICE_ACCOUNT) {
-			throw new Error("`GCP_SERVICE_ACCOUNT` environment variable not set. Please provide OAuth2 credentials JSON.");
+		// If we don't have credentials passed in, try to load from legacy env (for single account mode when not using MultiAccountManager)
+		if (!this.credentials && this.env.GCP_SERVICE_ACCOUNT) {
+			try {
+				this.credentials = JSON.parse(this.env.GCP_SERVICE_ACCOUNT);
+			} catch (e) {
+				console.error("Failed to parse GCP_SERVICE_ACCOUNT:", e);
+			}
+		}
+
+		if (!this.credentials) {
+			throw new Error("`GCP_SERVICE_ACCOUNT` environment variable not set or valid credentials not provided.");
 		}
 
 		try {
@@ -56,7 +71,7 @@ export class AuthManager {
 			let cachedTokenData = null;
 
 			try {
-				const cachedToken = await this.env.GEMINI_CLI_KV.get(KV_TOKEN_KEY, "json");
+				const cachedToken = await this.env.GEMINI_CLI_KV.get(this.kvTokenKey, "json");
 				if (cachedToken) {
 					cachedTokenData = cachedToken as CachedTokenData;
 					console.log("Found cached token in KV storage");
@@ -76,8 +91,8 @@ export class AuthManager {
 				console.log("Cached token expired or expiring soon");
 			}
 
-			// Parse original credentials from environment
-			const oauth2Creds: OAuth2Credentials = JSON.parse(this.env.GCP_SERVICE_ACCOUNT);
+			// Use stored credentials
+			const oauth2Creds: OAuth2Credentials = this.credentials;
 
 			// Check if the original token is still valid
 			const timeUntilExpiry = oauth2Creds.expiry_date - Date.now();
@@ -154,7 +169,7 @@ export class AuthManager {
 			const ttlSeconds = Math.floor((expiryDate - Date.now()) / 1000) - 300; // 5 minutes buffer
 
 			if (ttlSeconds > 0) {
-				await this.env.GEMINI_CLI_KV.put(KV_TOKEN_KEY, JSON.stringify(tokenData), {
+				await this.env.GEMINI_CLI_KV.put(this.kvTokenKey, JSON.stringify(tokenData), {
 					expirationTtl: ttlSeconds
 				});
 				console.log(`Token cached in KV storage with TTL of ${ttlSeconds} seconds`);
@@ -172,7 +187,7 @@ export class AuthManager {
 	 */
 	public async clearTokenCache(): Promise<void> {
 		try {
-			await this.env.GEMINI_CLI_KV.delete(KV_TOKEN_KEY);
+			await this.env.GEMINI_CLI_KV.delete(this.kvTokenKey);
 			console.log("Cleared cached token from KV storage");
 		} catch (kvError) {
 			console.log("Error clearing KV cache:", kvError);
@@ -184,7 +199,7 @@ export class AuthManager {
 	 */
 	public async getCachedTokenInfo(): Promise<TokenCacheInfo> {
 		try {
-			const cachedToken = await this.env.GEMINI_CLI_KV.get(KV_TOKEN_KEY, "json");
+			const cachedToken = await this.env.GEMINI_CLI_KV.get(this.kvTokenKey, "json");
 			if (cachedToken) {
 				const tokenData = cachedToken as CachedTokenData;
 				const timeUntilExpiry = tokenData.expiry_date - Date.now();
