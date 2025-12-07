@@ -122,7 +122,7 @@ Create a `.dev.vars` file:
 ```bash
 # Required: OAuth2 credentials JSON from Gemini CLI authentication
 # Single Account Mode:
-# GCP_SERVICE_ACCOUNT={"access_token":"ya29...","refresh_token":"1//...","scope":"...","token_type":"Bearer","id_token":"eyJ...","expiry_date":1750927763467}
+GCP_SERVICE_ACCOUNT={"access_token":"ya29...","refresh_token":"1//...","scope":"...","token_type":"Bearer","id_token":"eyJ...","expiry_date":1750927763467}
 
 # Multi-Account Mode (Recommended for higher throughput):
 GCP_SERVICE_ACCOUNT_0={"access_token":"ya29...","refresh_token":"1//...","scope":"...","token_type":"Bearer","id_token":"eyJ...","expiry_date":1750927763467}

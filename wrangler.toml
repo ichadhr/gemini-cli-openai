@@ -6,7 +6,7 @@ compatibility_flags = ["nodejs_compat"]
 
 # --- KV Namespaces ---
 kv_namespaces = [
-  { binding = "GEMINI_CLI_KV", id = "6c761101b4a34c089e6a123f2782c5fd" }
+  { binding = "GEMINI_CLI_KV", id = "3a2c4d84b5834263b9e91e4ccf097e9b" }
 ]
 
 # [vars]
@@ -22,3 +22,7 @@ port = 8787             # Port for local development server
 # wrangler.toml (wrangler v3.88.0^)
 [observability.logs]
 enabled = true
+
+[[routes]]
+pattern = "ai.ichad.id"
+custom_domain = true
