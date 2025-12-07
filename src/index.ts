@@ -163,6 +163,13 @@ body{
 app.get("/health", (c) => {
 	return c.json({ status: "ok", timestamp: new Date().toISOString() });
 });
+// Favicon endpoint
+app.get("/favicon.ico", async (c) => {
+  const response = await fetch("https://git.io/blankfavicon16x16");
+  const buffer = await response.arrayBuffer();
+  return c.body(buffer, 200, { "Content-Type": "image/x-icon" });
+});
+
 
 export default app;
 
