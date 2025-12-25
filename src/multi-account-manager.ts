@@ -19,8 +19,8 @@ export class MultiAccountManager {
         let index = 0;
         while (true) {
             const envKey = `GCP_SERVICE_ACCOUNT_${index}`;
-            // We need to cast env to any because these keys are dynamic and not in the Env interface definition explicitly
-            const credentialsJson = (this.env as any)[envKey] as string | undefined;
+            // We need to cast env to Record<string, string | undefined> to access dynamic keys
+            const credentialsJson = (this.env as unknown as Record<string, string | undefined>)[envKey];
 
             if (!credentialsJson) {
                 break;
@@ -90,7 +90,7 @@ export class MultiAccountManager {
 
         while (attempts < this.accounts.length) {
             const account = this.accounts[currentIndex];
-            const accountId = (account as any).id;
+            const accountId = account.id;
 
             if (await this.healthTracker.isAccountHealthy(accountId)) {
                 // Found a healthy account. Update the global rotation index for the NEXT request.
@@ -125,7 +125,7 @@ export class MultiAccountManager {
      */
     public async reportFailure(account: AuthManager, statusCode: number) {
         if (statusCode === 429 || statusCode === 503) {
-            const accountId = (account as any).id;
+            const accountId = account.id;
             await this.healthTracker.recordFailure(accountId);
         }
     }

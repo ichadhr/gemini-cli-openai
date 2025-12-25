@@ -149,42 +149,16 @@ export class GeminiApiClient {
 
 	/**
 	 * Parses a server-sent event (SSE) stream from the Gemini API.
+	 * Yields raw text chunks incrementally as they become available.
 	 */
-	private async *parseSSEStream(stream: ReadableStream<Uint8Array>): AsyncGenerator<GeminiResponse> {
+	private async *parseSSEStream(stream: ReadableStream<Uint8Array>): AsyncGenerator<string> {
 		const reader = stream.pipeThrough(new TextDecoderStream()).getReader();
-		let buffer = "";
-		let objectBuffer = "";
 
 		while (true) {
 			const { done, value } = await reader.read();
-			if (done) {
-				if (objectBuffer) {
-					try {
-						yield JSON.parse(objectBuffer);
-					} catch (e) {
-						console.error("Error parsing final SSE JSON object:", e);
-					}
-				}
-				break;
-			}
-
-			buffer += value;
-			const lines = buffer.split("\n");
-			buffer = lines.pop() || ""; // Keep the last, possibly incomplete, line.
-
-			for (const line of lines) {
-				if (line.trim() === "") {
-					if (objectBuffer) {
-						try {
-							yield JSON.parse(objectBuffer);
-						} catch (e) {
-							console.error("Error parsing SSE JSON object:", e);
-						}
-						objectBuffer = "";
-					}
-				} else if (line.startsWith("data: ")) {
-					objectBuffer += line.substring(6);
-				}
+			if (done) break;
+			if (value) {
+				yield value;
 			}
 		}
 	}
@@ -669,43 +643,326 @@ export class GeminiApiClient {
 		let hasClosedThinking = false;
 		let hasStartedThinking = false;
 
-		for await (const jsonData of this.parseSSEStream(response.body)) {
-			const candidate = jsonData.response?.candidates?.[0];
+		let buffer = "";
+		let objectBuffer = "";
+		let lastFlushTime = Date.now();
 
-			if (candidate?.content?.parts) {
-				for (const part of candidate.content.parts as GeminiPart[]) {
-					// Handle real thinking content from Gemini
-					if (part.thought === true && part.text) {
-						const thinkingText = part.text;
+		for await (const chunk of this.parseSSEStream(response.body)) {
+			buffer += chunk;
+			const lines = buffer.split("\n");
+			buffer = lines.pop() || "";
 
-						if (realThinkingAsContent) {
-							// Stream as content with <thinking> tags (DeepSeek R1 style)
-							if (!hasStartedThinking) {
-								yield {
-									type: "thinking_content",
-									data: "<thinking>\n"
-								};
-								hasStartedThinking = true;
+			for (const line of lines) {
+				if (line.trim() === "") {
+					if (objectBuffer) {
+						try {
+							const jsonData: GeminiResponse = JSON.parse(objectBuffer);
+							const candidate = jsonData.response?.candidates?.[0];
+
+							if (candidate?.content?.parts) {
+								for (const part of candidate.content.parts as GeminiPart[]) {
+									// Handle real thinking content from Gemini
+									if (part.thought === true && part.text) {
+										const thinkingText = part.text;
+
+										if (realThinkingAsContent) {
+											// Stream as content with <thinking> tags (DeepSeek R1 style)
+											if (!hasStartedThinking) {
+												yield {
+													type: "thinking_content",
+													data: "<thinking>\n"
+												};
+												hasStartedThinking = true;
+											}
+
+											yield {
+												type: "thinking_content",
+												data: thinkingText
+											};
+										} else {
+											// Stream as separate reasoning field
+											yield {
+												type: "real_thinking",
+												data: thinkingText
+											};
+										}
+									}
+									// Check if text content contains <think> tags (based on your original example)
+									else if (part.text && part.text.includes("<think>")) {
+										if (realThinkingAsContent) {
+											// Extract thinking content and convert to our format
+											const thinkingMatch = part.text.match(/<think>(.*?)<\/think>/s);
+											if (thinkingMatch) {
+												if (!hasStartedThinking) {
+													yield {
+														type: "thinking_content",
+														data: "<thinking>\n"
+													};
+													hasStartedThinking = true;
+												}
+
+												yield {
+													type: "thinking_content",
+													data: thinkingMatch[1]
+												};
+											}
+
+											// Extract any non-thinking content
+											const nonThinkingContent = part.text.replace(/<think>.*?<\/think>/gs, "").trim();
+											if (nonThinkingContent) {
+												if (hasStartedThinking && !hasClosedThinking) {
+													yield {
+														type: "thinking_content",
+														data: "\n</thinking>\n\n"
+													};
+													hasClosedThinking = true;
+												}
+												yield { type: "text", data: nonThinkingContent };
+											}
+										} else {
+											// Stream thinking as separate reasoning field
+											const thinkingMatch = part.text.match(/<think>(.*?)<\/think>/s);
+											if (thinkingMatch) {
+												yield {
+													type: "real_thinking",
+													data: thinkingMatch[1]
+												};
+											}
+
+											// Stream non-thinking content as regular text
+											const nonThinkingContent = part.text.replace(/<think>.*?<\/think>/gs, "").trim();
+											if (nonThinkingContent) {
+												yield { type: "text", data: nonThinkingContent };
+											}
+										}
+									}
+									// Handle regular content - only if it's not a thinking part and doesn't contain <think> tags
+									else if (part.text && !part.thought && !part.text.includes("<think>")) {
+										// Close thinking tag before first real content if needed
+										if ((needsThinkingClose || (realThinkingAsContent && hasStartedThinking)) && !hasClosedThinking) {
+											yield {
+												type: "thinking_content",
+												data: "\n</thinking>\n\n"
+											};
+											hasClosedThinking = true;
+										}
+
+										let processedText = part.text;
+										if (nativeToolsManager) {
+											processedText = citationsProcessor.processChunk(
+												part.text,
+												jsonData.response?.candidates?.[0]?.groundingMetadata
+											);
+										}
+										yield { type: "text", data: processedText };
+									}
+									// Handle function calls from Gemini
+									else if (part.functionCall) {
+										// Close thinking tag before function call if needed
+										if ((needsThinkingClose || (realThinkingAsContent && hasStartedThinking)) && !hasClosedThinking) {
+											yield {
+												type: "thinking_content",
+												data: "\n</thinking>\n\n"
+											};
+											hasClosedThinking = true;
+										}
+
+										const functionCallData: GeminiFunctionCall = {
+											name: part.functionCall.name,
+											args: part.functionCall.args
+										};
+
+										yield {
+											type: "tool_code",
+											data: functionCallData
+										};
+									}
+									// Note: Skipping unknown part structures
+								}
 							}
 
-							yield {
-								type: "thinking_content",
-								data: thinkingText
-							};
-						} else {
-							// Stream as separate reasoning field
-							yield {
-								type: "real_thinking",
-								data: thinkingText
-							};
+							if (jsonData.response?.usageMetadata) {
+								const usage = jsonData.response.usageMetadata;
+								const usageData: UsageData = {
+									inputTokens: usage.promptTokenCount || 0,
+									outputTokens: usage.candidatesTokenCount || 0
+								};
+								yield {
+									type: "usage",
+									data: usageData
+								};
+							}
+						} catch (e) {
+							console.error("Error parsing SSE JSON object:", e);
+						}
+						objectBuffer = "";
+						lastFlushTime = Date.now();
+					}
+				} else if (line.startsWith("data: ")) {
+					objectBuffer += line.substring(6);
+					// Flush mechanism: try to parse periodically if buffer is accumulating
+					if (Date.now() - lastFlushTime > 100 && objectBuffer) {
+						try {
+							const jsonData: GeminiResponse = JSON.parse(objectBuffer);
+							const candidate = jsonData.response?.candidates?.[0];
+
+							if (candidate?.content?.parts) {
+								for (const part of candidate.content.parts as GeminiPart[]) {
+									// Handle real thinking content from Gemini
+									if (part.thought === true && part.text) {
+										const thinkingText = part.text;
+
+										if (realThinkingAsContent) {
+											// Stream as content with <thinking> tags (DeepSeek R1 style)
+											if (!hasStartedThinking) {
+												yield {
+													type: "thinking_content",
+													data: "<thinking>\n"
+												};
+												hasStartedThinking = true;
+											}
+
+											yield {
+												type: "thinking_content",
+												data: thinkingText
+											};
+										} else {
+											// Stream as separate reasoning field
+											yield {
+												type: "real_thinking",
+												data: thinkingText
+											};
+										}
+									}
+									// Check if text content contains <think> tags (based on your original example)
+									else if (part.text && part.text.includes("<think>")) {
+										if (realThinkingAsContent) {
+											// Extract thinking content and convert to our format
+											const thinkingMatch = part.text.match(/<think>(.*?)<\/think>/s);
+											if (thinkingMatch) {
+												if (!hasStartedThinking) {
+													yield {
+														type: "thinking_content",
+														data: "<thinking>\n"
+													};
+													hasStartedThinking = true;
+												}
+
+												yield {
+													type: "thinking_content",
+													data: thinkingMatch[1]
+												};
+											}
+
+											// Extract any non-thinking content
+											const nonThinkingContent = part.text.replace(/<think>.*?<\/think>/gs, "").trim();
+											if (nonThinkingContent) {
+												if (hasStartedThinking && !hasClosedThinking) {
+													yield {
+														type: "thinking_content",
+														data: "\n</thinking>\n\n"
+													};
+													hasClosedThinking = true;
+												}
+												yield { type: "text", data: nonThinkingContent };
+											}
+										} else {
+											// Stream thinking as separate reasoning field
+											const thinkingMatch = part.text.match(/<think>(.*?)<\/think>/s);
+											if (thinkingMatch) {
+												yield {
+													type: "real_thinking",
+													data: thinkingMatch[1]
+												};
+											}
+
+											// Stream non-thinking content as regular text
+											const nonThinkingContent = part.text.replace(/<think>.*?<\/think>/gs, "").trim();
+											if (nonThinkingContent) {
+												yield { type: "text", data: nonThinkingContent };
+											}
+										}
+									}
+									// Handle regular content - only if it's not a thinking part and doesn't contain <think> tags
+									else if (part.text && !part.thought && !part.text.includes("<think>")) {
+										// Close thinking tag before first real content if needed
+										if ((needsThinkingClose || (realThinkingAsContent && hasStartedThinking)) && !hasClosedThinking) {
+											yield {
+												type: "thinking_content",
+												data: "\n</thinking>\n\n"
+											};
+											hasClosedThinking = true;
+										}
+
+										let processedText = part.text;
+										if (nativeToolsManager) {
+											processedText = citationsProcessor.processChunk(
+												part.text,
+												jsonData.response?.candidates?.[0]?.groundingMetadata
+											);
+										}
+										yield { type: "text", data: processedText };
+									}
+									// Handle function calls from Gemini
+									else if (part.functionCall) {
+										// Close thinking tag before function call if needed
+										if ((needsThinkingClose || (realThinkingAsContent && hasStartedThinking)) && !hasClosedThinking) {
+											yield {
+												type: "thinking_content",
+												data: "\n</thinking>\n\n"
+											};
+											hasClosedThinking = true;
+										}
+
+										const functionCallData: GeminiFunctionCall = {
+											name: part.functionCall.name,
+											args: part.functionCall.args
+										};
+
+										yield {
+											type: "tool_code",
+											data: functionCallData
+										};
+									}
+									// Note: Skipping unknown part structures
+								}
+							}
+
+							if (jsonData.response?.usageMetadata) {
+								const usage = jsonData.response.usageMetadata;
+								const usageData: UsageData = {
+									inputTokens: usage.promptTokenCount || 0,
+									outputTokens: usage.candidatesTokenCount || 0
+								};
+								yield {
+									type: "usage",
+									data: usageData
+								};
+							}
+							objectBuffer = "";
+							lastFlushTime = Date.now();
+						} catch {
+							// Not ready yet, continue accumulating
 						}
 					}
-					// Check if text content contains <think> tags (based on your original example)
-					else if (part.text && part.text.includes("<think>")) {
-						if (realThinkingAsContent) {
-							// Extract thinking content and convert to our format
-							const thinkingMatch = part.text.match(/<think>(.*?)<\/think>/s);
-							if (thinkingMatch) {
+				}
+			}
+		}
+
+		// Handle any remaining buffered data
+		if (objectBuffer) {
+			try {
+				const jsonData: GeminiResponse = JSON.parse(objectBuffer);
+				const candidate = jsonData.response?.candidates?.[0];
+
+				if (candidate?.content?.parts) {
+					for (const part of candidate.content.parts as GeminiPart[]) {
+						// Handle real thinking content from Gemini
+						if (part.thought === true && part.text) {
+							const thinkingText = part.text;
+
+							if (realThinkingAsContent) {
+								// Stream as content with <thinking> tags (DeepSeek R1 style)
 								if (!hasStartedThinking) {
 									yield {
 										type: "thinking_content",
@@ -716,94 +973,123 @@ export class GeminiApiClient {
 
 								yield {
 									type: "thinking_content",
-									data: thinkingMatch[1]
+									data: thinkingText
 								};
-							}
-
-							// Extract any non-thinking coRecentent
-							const nonThinkingContent = part.text.replace(/<think>.*?<\/think>/gs, "").trim();
-							if (nonThinkingContent) {
-								if (hasStartedThinking && !hasClosedThinking) {
-									yield {
-										type: "thinking_content",
-										data: "\n</thinking>\n\n"
-									};
-									hasClosedThinking = true;
-								}
-								yield { type: "text", data: nonThinkingContent };
-							}
-						} else {
-							// Stream thinking as separate reasoning field
-							const thinkingMatch = part.text.match(/<think>(.*?)<\/think>/s);
-							if (thinkingMatch) {
+							} else {
+								// Stream as separate reasoning field
 								yield {
 									type: "real_thinking",
-									data: thinkingMatch[1]
+									data: thinkingText
 								};
 							}
+						}
+						// Check if text content contains <think> tags (based on your original example)
+						else if (part.text && part.text.includes("<think>")) {
+							if (realThinkingAsContent) {
+								// Extract thinking content and convert to our format
+								const thinkingMatch = part.text.match(/<think>(.*?)<\/think>/s);
+								if (thinkingMatch) {
+									if (!hasStartedThinking) {
+										yield {
+											type: "thinking_content",
+											data: "<thinking>\n"
+										};
+										hasStartedThinking = true;
+									}
 
-							// Stream non-thinking content as regular text
-							const nonThinkingContent = part.text.replace(/<think>.*?<\/think>/gs, "").trim();
-							if (nonThinkingContent) {
-								yield { type: "text", data: nonThinkingContent };
+									yield {
+										type: "thinking_content",
+										data: thinkingMatch[1]
+									};
+								}
+
+								// Extract any non-thinking content
+								const nonThinkingContent = part.text.replace(/<think>.*?<\/think>/gs, "").trim();
+								if (nonThinkingContent) {
+									if (hasStartedThinking && !hasClosedThinking) {
+										yield {
+											type: "thinking_content",
+											data: "\n</thinking>\n\n"
+										};
+										hasClosedThinking = true;
+									}
+									yield { type: "text", data: nonThinkingContent };
+								}
+							} else {
+								// Stream thinking as separate reasoning field
+								const thinkingMatch = part.text.match(/<think>(.*?)<\/think>/s);
+								if (thinkingMatch) {
+									yield {
+										type: "real_thinking",
+										data: thinkingMatch[1]
+									};
+								}
+
+								// Stream non-thinking content as regular text
+								const nonThinkingContent = part.text.replace(/<think>.*?<\/think>/gs, "").trim();
+								if (nonThinkingContent) {
+									yield { type: "text", data: nonThinkingContent };
+								}
 							}
 						}
-					}
-					// Handle regular content - only if it's not a thinking part and doesn't contain <think> tags
-					else if (part.text && !part.thought && !part.text.includes("<think>")) {
-						// Close thinking tag before first real content if needed
-						if ((needsThinkingClose || (realThinkingAsContent && hasStartedThinking)) && !hasClosedThinking) {
-							yield {
-								type: "thinking_content",
-								data: "\n</thinking>\n\n"
+						// Handle regular content - only if it's not a thinking part and doesn't contain <think> tags
+						else if (part.text && !part.thought && !part.text.includes("<think>")) {
+							// Close thinking tag before first real content if needed
+							if ((needsThinkingClose || (realThinkingAsContent && hasStartedThinking)) && !hasClosedThinking) {
+								yield {
+									type: "thinking_content",
+									data: "\n</thinking>\n\n"
+								};
+								hasClosedThinking = true;
+							}
+
+							let processedText = part.text;
+							if (nativeToolsManager) {
+								processedText = citationsProcessor.processChunk(
+									part.text,
+									jsonData.response?.candidates?.[0]?.groundingMetadata
+								);
+							}
+							yield { type: "text", data: processedText };
+						}
+						// Handle function calls from Gemini
+						else if (part.functionCall) {
+							// Close thinking tag before function call if needed
+							if ((needsThinkingClose || (realThinkingAsContent && hasStartedThinking)) && !hasClosedThinking) {
+								yield {
+									type: "thinking_content",
+									data: "\n</thinking>\n\n"
+								};
+								hasClosedThinking = true;
+							}
+
+							const functionCallData: GeminiFunctionCall = {
+								name: part.functionCall.name,
+								args: part.functionCall.args
 							};
-							hasClosedThinking = true;
-						}
 
-						let processedText = part.text;
-						if (nativeToolsManager) {
-							processedText = citationsProcessor.processChunk(
-								part.text,
-								jsonData.response?.candidates?.[0]?.groundingMetadata
-							);
-						}
-						yield { type: "text", data: processedText };
-					}
-					// Handle function calls from Gemini
-					else if (part.functionCall) {
-						// Close thinking tag before function call if needed
-						if ((needsThinkingClose || (realThinkingAsContent && hasStartedThinking)) && !hasClosedThinking) {
 							yield {
-								type: "thinking_content",
-								data: "\n</thinking>\n\n"
+								type: "tool_code",
+								data: functionCallData
 							};
-							hasClosedThinking = true;
 						}
-
-						const functionCallData: GeminiFunctionCall = {
-							name: part.functionCall.name,
-							args: part.functionCall.args
-						};
-
-						yield {
-							type: "tool_code",
-							data: functionCallData
-						};
+						// Note: Skipping unknown part structures
 					}
-					// Note: Skipping unknown part structures
 				}
-			}
 
-			if (jsonData.response?.usageMetadata) {
-				const usage = jsonData.response.usageMetadata;
-				const usageData: UsageData = {
-					inputTokens: usage.promptTokenCount || 0,
-					outputTokens: usage.candidatesTokenCount || 0
-				};
-				yield {
-					type: "usage",
-					data: usageData
-				};
+				if (jsonData.response?.usageMetadata) {
+					const usage = jsonData.response.usageMetadata;
+					const usageData: UsageData = {
+						inputTokens: usage.promptTokenCount || 0,
+						outputTokens: usage.candidatesTokenCount || 0
+					};
+					yield {
+						type: "usage",
+						data: usageData
+					};
+				}
+			} catch (e) {
+				console.error("Error parsing final SSE JSON object:", e);
 			}
 		}
 	}

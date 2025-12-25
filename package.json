@@ -3,7 +3,8 @@
   "version": "1.0.0",
   "private": true,
   "scripts": {
-    "deploy": "wrangler deploy",
+    "sync-env": "node sync-env.js",
+    "deploy": "npm run sync-env && wrangler deploy",
     "dev": "wrangler dev",
     "format": "prettier --write src",
     "format:check": "prettier --check src",

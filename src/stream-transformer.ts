@@ -157,6 +157,14 @@ export function createOpenAIStreamTransformer(model: string): TransformStream<St
 			}
 
 			if (Object.keys(delta).length > 0) {
+				// Ensure the first chunk has role set for OpenAI compatibility
+				if (firstChunk && !delta.role) {
+					delta.role = "assistant";
+				}
+				if (firstChunk) {
+					firstChunk = false;
+				}
+
 				openAIChunk = {
 					id: chatID,
 					object: OPENAI_CHAT_COMPLETION_OBJECT,

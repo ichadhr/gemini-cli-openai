@@ -25,7 +25,3 @@ port = 8787             # Port for local development server
 # wrangler.toml (wrangler v3.88.0^)
 [observability.logs]
 enabled = true
-
-[[routes]]
-pattern = "ai.ichad.id"
-custom_domain = true

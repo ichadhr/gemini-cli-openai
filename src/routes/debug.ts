@@ -1,6 +1,5 @@
 import { Hono } from "hono";
 import { Env } from "../types";
-import { AuthManager } from "../auth";
 import { MultiAccountManager } from "../multi-account-manager";
 import { GeminiApiClient } from "../gemini-client";
 
