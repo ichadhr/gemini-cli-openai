@@ -3,7 +3,7 @@ import { Env, ChatCompletionRequest, ChatCompletionResponse, ChatMessage, ModelI
 import { DEFAULT_MODEL, getAllModelIds } from "../models";
 import { OPENAI_MODEL_OWNER } from "../config";
 import { DEFAULT_THINKING_BUDGET, MIME_TYPE_MAP } from "../constants";
-import { AuthManager } from "../auth";
+import { MultiAccountManager } from "../multi-account-manager";
 import { GeminiApiClient } from "../gemini-client";
 import { createOpenAIStreamTransformer } from "../stream-transformer";
 import { isMediaTypeSupported, validateContent, validateModel } from "../utils/validation";
@@ -163,8 +163,8 @@ OpenAIRoute.post("/chat/completions", async (c) => {
     });
 
     // Initialize services
-    const authManager = new AuthManager(c.env);
-    const geminiClient = new GeminiApiClient(c.env, authManager);
+    const multiAccountManager = new MultiAccountManager(c.env);
+    const geminiClient = new GeminiApiClient(c.env, multiAccountManager);
 
     if (stream) {
       // Streaming response
@@ -364,8 +364,8 @@ OpenAIRoute.post("/audio/transcriptions", async (c) => {
     ];
 
     // Initialize client
-    const authManager = new AuthManager(c.env);
-    const geminiClient = new GeminiApiClient(c.env, authManager);
+    const multiAccountManager = new MultiAccountManager(c.env);
+    const geminiClient = new GeminiApiClient(c.env, multiAccountManager);
 
     // Get completion
     const completion = await geminiClient.getCompletion(model, "", messages);
