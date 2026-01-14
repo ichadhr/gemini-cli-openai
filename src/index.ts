@@ -64,11 +64,9 @@ app.get("/health", (c) => {
 });
 // Favicon endpoint
 app.get("/favicon.ico", async (c) => {
-  const response = await fetch("https://git.io/blankfavicon16x16");
-  const buffer = await response.arrayBuffer();
-  return c.body(buffer, 200, { "Content-Type": "image/x-icon" });
+	const response = await fetch("https://git.io/blankfavicon16x16");
+	const buffer = await response.arrayBuffer();
+	return c.body(buffer, 200, { "Content-Type": "image/x-icon" });
 });
 
-
 export default app;
-

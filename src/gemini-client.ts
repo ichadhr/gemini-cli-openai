@@ -553,7 +553,9 @@ export class GeminiApiClient {
 	): AsyncGenerator<StreamChunk> {
 		// Ensure auth is initialized (redundant but safe)
 		await authManager.initializeAuth();
-		console.log(`[Mitigation] Stream request attempt ${retryAttempt + 1} with account GCP_SERVICE_ACCOUNT_${authManager.id}${originalModel ? `, model: ${originalModel}` : ''}`);
+		console.log(
+			`[Mitigation] Stream request attempt ${retryAttempt + 1} with account GCP_SERVICE_ACCOUNT_${authManager.id}${originalModel ? `, model: ${originalModel}` : ""}`
+		);
 
 		const citationsProcessor = new CitationsProcessor(this.env);
 		const response = await fetch(`${CODE_ASSIST_ENDPOINT}/${CODE_ASSIST_API_VERSION}:streamGenerateContent?alt=sse`, {
@@ -586,18 +588,21 @@ export class GeminiApiClient {
 
 			// Handle Rate Limits (429/503): Report failure and switch account
 			if (response.status === 429 || response.status === 503) {
-				console.log(`[Mitigation] Sequence step: Rate limit (${response.status}) - Account rotation initiated from GCP_SERVICE_ACCOUNT_${authManager.id}`);
+				console.log(
+					`[Mitigation] Sequence step: Rate limit (${response.status}) - Account rotation initiated from GCP_SERVICE_ACCOUNT_${authManager.id}`
+				);
 				await this.multiAccountManager.reportFailure(authManager, response.status);
 
 				// Retry with next account if we haven't tried too many times (e.g., 3 * number of accounts)
 				// We use a safe upper bound to prevent infinite loops
 				const maxRetries = this.multiAccountManager.getAccountCount() * 3;
 
-
 				if (retryAttempt < maxRetries) {
 					// Get a NEW account for retry
 					const nextAuthManager = await this.multiAccountManager.getAccount();
-					console.log(`[Mitigation] Account rotation: Attempt ${retryAttempt + 1}/${maxRetries} - Selected GCP_SERVICE_ACCOUNT_${nextAuthManager.id}`);
+					console.log(
+						`[Mitigation] Account rotation: Attempt ${retryAttempt + 1}/${maxRetries} - Selected GCP_SERVICE_ACCOUNT_${nextAuthManager.id}`
+					);
 
 					// We might need to update the project ID in the request if the new account uses a different project!
 					// This is complex. For now, we assume if we switch accounts, we might fail again on 403 if project mismatch.
@@ -639,10 +644,17 @@ export class GeminiApiClient {
 
 			// Handle rate limiting with auto model switching (only if we exhausted account retries or it's a different error)
 			// Note: We prioritize account rotation over model switching. Model switching is the last resort.
-			if (this.autoSwitchHelper.isRateLimitStatus(response.status) && !isRetry && originalModel && this.autoSwitchHelper.shouldAttemptFallback(originalModel)) {
+			if (
+				this.autoSwitchHelper.isRateLimitStatus(response.status) &&
+				!isRetry &&
+				originalModel &&
+				this.autoSwitchHelper.shouldAttemptFallback(originalModel)
+			) {
 				const fallbackModel = this.autoSwitchHelper.getFallbackModel(originalModel);
 				if (fallbackModel && this.autoSwitchHelper.isEnabled()) {
-					console.log(`[Mitigation] Sequence step: Rate limit (${response.status}) - Model fallback from ${originalModel} to ${fallbackModel} (account rotation exhausted)`);
+					console.log(
+						`[Mitigation] Sequence step: Rate limit (${response.status}) - Model fallback from ${originalModel} to ${fallbackModel} (account rotation exhausted)`
+					);
 
 					// Create new request with fallback model
 					const fallbackRequest: StreamRequest = {
