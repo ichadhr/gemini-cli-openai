@@ -633,6 +633,7 @@ export class GeminiApiClient {
 
 			const errorText = await response.text();
 			console.error(`[GeminiAPI] Stream request failed: ${response.status}`, errorText);
+			console.error(`[DEBUG] Request payload:`, JSON.stringify(streamRequest, null, 2));
 			throw new Error(`Stream request failed: ${response.status}`);
 		}
 

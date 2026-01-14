@@ -241,8 +241,11 @@ export class GenerationConfigValidator {
 		tools: unknown[] | undefined;
 		toolConfig: unknown | undefined;
 	} {
+		console.log(`[DEBUG] Tool config:`, JSON.stringify(config, null, 2));
+		console.log(`[DEBUG] Options:`, JSON.stringify(options, null, 2));
 		if (config.useCustomTools && config.customTools && config.customTools.length > 0) {
 			const { toolConfig } = this.createValidateTools(options);
+			console.log(`[DEBUG] Custom tools config:`, JSON.stringify(toolConfig, null, 2));
 			return {
 				tools: [
 					{
@@ -254,16 +257,18 @@ export class GenerationConfigValidator {
 		}
 
 		if (config.useNativeTools && config.nativeTools && config.nativeTools.length > 0) {
+			const nativeTools = config.nativeTools.map((tool) => {
+				if (tool.google_search) {
+					return { google_search: tool.google_search };
+				}
+				if (tool.url_context) {
+					return { url_context: tool.url_context };
+				}
+				return tool;
+			});
+			console.log(`[DEBUG] Native tools config:`, JSON.stringify(nativeTools, null, 2));
 			return {
-				tools: config.nativeTools.map((tool) => {
-					if (tool.google_search) {
-						return { google_search: tool.google_search };
-					}
-					if (tool.url_context) {
-						return { url_context: tool.url_context };
-					}
-					return tool;
-				}),
+				tools: nativeTools,
 				toolConfig: undefined // Native tools don't use toolConfig in the same way
 			};
 		}

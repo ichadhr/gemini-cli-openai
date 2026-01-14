@@ -977,10 +977,10 @@ has-flag@^4.0.0:
   resolved "https://registry.yarnpkg.com/has-flag/-/has-flag-4.0.0.tgz#944771fd9c81c81265c4d6941860da06bb59479b"
   integrity sha512-EykJT/Q1KjTWctppgIAgfSO0tKVuZUjhgMr17kqTumMl6Afv3EISleU7qZUzoXDFTAHTDC4NOoG/ZxU3EvlMPQ==
 
-hono@^4.9.2:
-  version "4.9.2"
-  resolved "https://registry.yarnpkg.com/hono/-/hono-4.9.2.tgz#ac45a41707da1966134df11cc0b43389098e29d8"
-  integrity sha512-UG2jXGS/gkLH42l/1uROnwXpkjvvxkl3kpopL3LBo27NuaDPI6xHNfuUSilIHcrBkPfl4y0z6y2ByI455TjNRw==
+hono@^4.11.4:
+  version "4.11.4"
+  resolved "https://registry.yarnpkg.com/hono/-/hono-4.11.4.tgz#0c1ba7175e08624932224bc7644e4cb22b294080"
+  integrity sha512-U7tt8JsyrxSRKspfhtLET79pU8K+tInj5QZXs1jSugO1Vq5dFj3kmZsRldo29mTBfcjDRVRXrEZ6LS63Cog9ZA==
 
 ignore@^5.2.0:
   version "5.3.2"

@@ -17,7 +17,7 @@ RUN groupadd -g 1001 nodejs && \
 WORKDIR /app
 
 # Install wrangler globally
-RUN npm install -g wrangler@4.23.0
+RUN npm install -g wrangler@4.30.0
 
 # Copy package files first to leverage Docker cache
 COPY package*.json yarn.lock* ./
