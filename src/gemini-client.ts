@@ -106,6 +106,24 @@ function isTextContent(content: MessageContent): content is TextContent {
 }
 
 /**
+ * Cleans excessive whitespace and newlines from thinking content
+ * Preserves natural section breaks but removes excessive spacing
+ */
+function cleanThinkingWhitespace(text: string): string {
+	return (
+		text
+			// Replace 3+ consecutive newlines (with optional whitespace) with 2 newlines
+			.replace(/\n\s*\n\s*\n+/g, "\n\n")
+			// Clean up lines that are only whitespace between content
+			.replace(/\n\s*\n/g, "\n\n")
+			// Remove excessive spaces around newlines
+			.replace(/[ \t]*\n[ \t]*/g, "\n")
+			// Trim excessive trailing/leading whitespace
+			.trim()
+	);
+}
+
+/**
  * Handles communication with Google's Gemini API through the Code Assist endpoint.
  * Manages project discovery, streaming, and response parsing.
  */
@@ -729,7 +747,7 @@ export class GeminiApiClient {
 
 											yield {
 												type: "thinking_content",
-												data: thinkingText
+												data: cleanThinkingWhitespace(thinkingText)
 											};
 										} else {
 											// Stream as separate reasoning field
@@ -755,7 +773,7 @@ export class GeminiApiClient {
 
 												yield {
 													type: "thinking_content",
-													data: thinkingMatch[1]
+													data: cleanThinkingWhitespace(thinkingMatch[1])
 												};
 											}
 
@@ -876,7 +894,7 @@ export class GeminiApiClient {
 
 											yield {
 												type: "thinking_content",
-												data: thinkingText
+												data: cleanThinkingWhitespace(thinkingText)
 											};
 										} else {
 											// Stream as separate reasoning field
@@ -902,7 +920,7 @@ export class GeminiApiClient {
 
 												yield {
 													type: "thinking_content",
-													data: thinkingMatch[1]
+													data: cleanThinkingWhitespace(thinkingMatch[1])
 												};
 											}
 
@@ -1025,7 +1043,7 @@ export class GeminiApiClient {
 
 								yield {
 									type: "thinking_content",
-									data: thinkingText
+									data: cleanThinkingWhitespace(thinkingText)
 								};
 							} else {
 								// Stream as separate reasoning field
@@ -1051,7 +1069,7 @@ export class GeminiApiClient {
 
 									yield {
 										type: "thinking_content",
-										data: thinkingMatch[1]
+										data: cleanThinkingWhitespace(thinkingMatch[1])
 									};
 								}
 
