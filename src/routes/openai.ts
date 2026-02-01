@@ -36,8 +36,8 @@ OpenAIRoute.post("/chat/completions", async (c) => {
 		const body = await c.req.json<ChatCompletionRequest>();
 		const model = body.model || DEFAULT_MODEL;
 		const messages = body.messages || [];
-		// OpenAI API compatibility: stream defaults to true unless explicitly set to false
-		const stream = body.stream !== false;
+		// OpenAI API compatibility: stream defaults to false unless explicitly set to true
+		const stream = body.stream === true;
 
 		// Check environment settings for real thinking
 		const isRealThinkingEnabled = c.env.ENABLE_REAL_THINKING === "true";
