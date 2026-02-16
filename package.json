@@ -5,10 +5,10 @@
   "scripts": {
     "sync-env": "node sync-env.js",
     "deploy": "npm run sync-env && wrangler deploy",
-    "dev": "wrangler dev",
+    "dev": "npm run sync-env && wrangler dev",
     "format": "prettier --write src",
     "format:check": "prettier --check src",
-    "build": "wrangler deploy --dry-run --outdir=dist",
+    "build": "npm run sync-env && wrangler deploy --dry-run --outdir=dist",
     "lint": "eslint --ext .ts src && npm run tsc",
     "lint:fix": "eslint --ext .ts src --fix",
     "docker:build": "docker-compose build",

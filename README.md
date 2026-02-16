@@ -190,6 +190,7 @@ npm run dev
 | `ENABLE_INLINE_CITATIONS` | Inject markdown citations for search results (set to `"true"` to enable). |
 | `INCLUDE_GROUNDING_METADATA` | Include raw grounding metadata in the stream (set to `"false"` to disable). |
 
+
 #### Content Safety
 
 | Variable | Description |
@@ -373,7 +374,7 @@ for await (const chunk of stream) {
 }
 ```
 
-### cURL
+### cURL (Non-streaming - default per OpenAI spec)
 ```bash
 curl -X POST https://your-worker.workers.dev/v1/chat/completions \
   -H "Content-Type: application/json" \
@@ -386,7 +387,21 @@ curl -X POST https://your-worker.workers.dev/v1/chat/completions \
   }'
 ```
 
-### Raw JavaScript/TypeScript
+### cURL (Streaming)
+```bash
+curl -X POST https://your-worker.workers.dev/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer sk-your-secret-api-key-here" \
+  -d '{
+    "model": "gemini-2.5-flash",
+    "messages": [
+      {"role": "user", "content": "Explain quantum computing"}
+    ],
+    "stream": true
+  }'
+```
+
+### Raw JavaScript/TypeScript (Non-streaming - default per OpenAI spec)
 ```javascript
 const response = await fetch('https://your-worker.workers.dev/v1/chat/completions', {
   method: 'POST',
@@ -398,6 +413,26 @@ const response = await fetch('https://your-worker.workers.dev/v1/chat/completion
     messages: [
       { role: 'user', content: 'Hello, world!' }
     ]
+  })
+});
+
+const data = await response.json();
+console.log(data.choices[0].message.content);
+```
+
+### Raw JavaScript/TypeScript (Streaming)
+```javascript
+const response = await fetch('https://your-worker.workers.dev/v1/chat/completions', {
+  method: 'POST',
+  headers: {
+    'Content-Type': 'application/json',
+  },
+  body: JSON.stringify({
+    model: 'gemini-2.5-flash',
+    messages: [
+      { role: 'user', content: 'Hello, world!' }
+    ],
+    stream: true
   })
 });
 
@@ -423,7 +458,24 @@ while (true) {
 }
 ```
 
-### Raw Python (without SDK)
+### Raw Python (without SDK) - Non-streaming (default per OpenAI spec)
+```python
+import requests
+
+url = "https://your-worker.workers.dev/v1/chat/completions"
+data = {
+    "model": "gemini-2.5-flash",
+    "messages": [
+        {"role": "user", "content": "Write a Python function to calculate fibonacci"}
+    ]
+}
+
+response = requests.post(url, json=data)
+result = response.json()
+print(result['choices'][0]['message']['content'])
+```
+
+### Raw Python (without SDK) - Streaming
 ```python
 import requests
 import json
@@ -433,7 +485,8 @@ data = {
     "model": "gemini-2.5-flash",
     "messages": [
         {"role": "user", "content": "Write a Python function to calculate fibonacci"}
-    ]
+    ],
+    "stream": True
 }
 
 response = requests.post(url, json=data, stream=True)
@@ -539,6 +592,9 @@ GET /v1/models
 ```
 
 ### Chat Completions
+
+**Note:** Following the OpenAI API specification, the `stream` parameter defaults to `false` (non-streaming). Set `"stream": true` to enable streaming responses.
+
 ```http
 POST /v1/chat/completions
 Content-Type: application/json
