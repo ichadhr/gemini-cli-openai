@@ -7,6 +7,7 @@ import { MultiAccountManager } from "../multi-account-manager";
 import { GeminiApiClient } from "../gemini-client";
 import { createOpenAIStreamTransformer } from "../stream-transformer";
 import { isMediaTypeSupported, validateContent, validateModel } from "../utils/validation";
+import { errors } from "../utils/errors";
 import { Buffer } from "node:buffer";
 
 /**
@@ -93,13 +94,13 @@ OpenAIRoute.post("/chat/completions", async (c) => {
 		});
 
 		if (!messages.length) {
-			return c.json({ error: "messages is a required field" }, 400);
+			return c.json(errors.missingField("messages"), 400);
 		}
 
 		// Validate model
 		const modelValidation = validateModel(model);
 		if (!modelValidation.isValid) {
-			return c.json({ error: modelValidation.error }, 400);
+			return c.json(errors.invalidRequest(modelValidation.error ?? "Invalid model specified", "model"), 400);
 		}
 
 		// Unified media validation
@@ -122,9 +123,7 @@ OpenAIRoute.post("/chat/completions", async (c) => {
 			if (messagesWithMedia.length > 0) {
 				if (!isMediaTypeSupported(model, supportKey)) {
 					return c.json(
-						{
-							error: `Model '${model}' does not support ${name}. Please use a model that supports this feature.`
-						},
+						errors.invalidRequest(`Model '${model}' does not support ${name}.`),
 						400
 					);
 				}
@@ -134,7 +133,7 @@ OpenAIRoute.post("/chat/completions", async (c) => {
 						if (content.type === type) {
 							const { isValid, error } = validateContent(type, content);
 							if (!isValid) {
-								return c.json({ error }, 400);
+								return c.json(errors.invalidRequest(error ?? `Invalid ${name}`), 400);
 							}
 						}
 					}
@@ -258,13 +257,13 @@ OpenAIRoute.post("/chat/completions", async (c) => {
 			} catch (completionError: unknown) {
 				const errorMessage = completionError instanceof Error ? completionError.message : String(completionError);
 				console.error("Completion error:", errorMessage);
-				return c.json({ error: errorMessage }, 500);
+				return c.json(errors.server(errorMessage), 500);
 			}
 		}
 	} catch (e: unknown) {
 		const errorMessage = e instanceof Error ? e.message : String(e);
 		console.error("Top-level error:", e);
-		return c.json({ error: errorMessage }, 500);
+		return c.json(errors.server(errorMessage), 500);
 	}
 });
 
@@ -278,13 +277,13 @@ OpenAIRoute.post("/audio/transcriptions", async (c) => {
 		const prompt = (body["prompt"] as string) || "Transcribe this audio in detail.";
 
 		if (!file || !(file instanceof File)) {
-			return c.json({ error: "File is required" }, 400);
+			return c.json(errors.missingField("file"), 400);
 		}
 
 		// Validate model
 		const modelValidation = validateModel(model);
 		if (!modelValidation.isValid) {
-			return c.json({ error: modelValidation.error }, 400);
+			return c.json(errors.invalidRequest(modelValidation.error ?? "Invalid model specified", "model"), 400);
 		}
 
 		let mimeType = file.type;
@@ -306,26 +305,20 @@ OpenAIRoute.post("/audio/transcriptions", async (c) => {
 		if (isVideo) {
 			if (!isMediaTypeSupported(model, "supportsVideos")) {
 				return c.json(
-					{
-						error: `Model '${model}' does not support video inputs.`
-					},
+					errors.invalidRequest(`Model '${model}' does not support video inputs.`),
 					400
 				);
 			}
 		} else if (isAudio) {
 			if (!isMediaTypeSupported(model, "supportsAudios")) {
 				return c.json(
-					{
-						error: `Model '${model}' does not support audio inputs.`
-					},
+					errors.invalidRequest(`Model '${model}' does not support audio inputs.`),
 					400
 				);
 			}
 		} else {
 			return c.json(
-				{
-					error: `Unsupported media type: ${mimeType}. Only audio and video files are supported.`
-				},
+				errors.invalidRequest(`Unsupported media type: ${mimeType}. Only audio and video files are supported.`),
 				400
 			);
 		}
@@ -374,6 +367,6 @@ OpenAIRoute.post("/audio/transcriptions", async (c) => {
 	} catch (e: unknown) {
 		const errorMessage = e instanceof Error ? e.message : String(e);
 		console.error("Transcription error:", errorMessage);
-		return c.json({ error: errorMessage }, 500);
+		return c.json(errors.server(errorMessage), 500);
 	}
 });

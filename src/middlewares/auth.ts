@@ -1,5 +1,6 @@
 import { MiddlewareHandler } from "hono";
 import { Env } from "../types";
+import { errors } from "../utils/errors";
 
 /**
  * Middleware to enforce OpenAI-style API key authentication if OPENAI_API_KEY is set in the environment.
@@ -18,45 +19,18 @@ export const openAIApiKeyAuth: MiddlewareHandler<{ Bindings: Env }> = async (c, 
 		const authHeader = c.req.header("Authorization");
 
 		if (!authHeader) {
-			return c.json(
-				{
-					error: {
-						message: "Missing Authorization header",
-						type: "authentication_error",
-						code: "missing_authorization"
-					}
-				},
-				401
-			);
+			return c.json(errors.missingAuthorization(), 401);
 		}
 
 		// Check for Bearer token format
 		const match = authHeader.match(/^Bearer\s+(.+)$/);
 		if (!match) {
-			return c.json(
-				{
-					error: {
-						message: "Invalid Authorization header format. Expected: Bearer <token>",
-						type: "authentication_error",
-						code: "invalid_authorization_format"
-					}
-				},
-				401
-			);
+			return c.json(errors.invalidAuthorizationFormat(), 401);
 		}
 
 		const providedKey = match[1];
 		if (providedKey !== c.env.OPENAI_API_KEY) {
-			return c.json(
-				{
-					error: {
-						message: "Invalid API key",
-						type: "authentication_error",
-						code: "invalid_api_key"
-					}
-				},
-				401
-			);
+			return c.json(errors.authentication("Invalid API key"), 401);
 		}
 
 		// Optionally log successful authentication

@@ -259,8 +259,8 @@ export class GenerationConfigValidator {
 		tools: unknown[] | undefined;
 		toolConfig: unknown | undefined;
 	} {
-		console.log(`[DEBUG] Tool config:`, JSON.stringify(config, null, 2));
-		console.log(`[DEBUG] Options:`, JSON.stringify(options, null, 2));
+		console.log(`[INFO] Tool config:`, JSON.stringify(config, null, 2));
+		console.log(`[INFO] Options:`, JSON.stringify(options, null, 2));
 		if (config.useCustomTools && config.customTools && config.customTools.length > 0) {
 			const { tools, toolConfig } = this.createValidateTools(options);
 			return {
@@ -279,7 +279,7 @@ export class GenerationConfigValidator {
 				}
 				return tool;
 			});
-			console.log(`[DEBUG] Native tools config:`, JSON.stringify(nativeTools, null, 2));
+			console.log(`[INFO] Native tools config:`, JSON.stringify(nativeTools, null, 2));
 			return {
 				tools: nativeTools,
 				toolConfig: undefined // Native tools don't use toolConfig in the same way
