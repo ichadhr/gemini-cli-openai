@@ -1,5 +1,5 @@
-import { GeminiUrlContextMetadata, GroundingMetadata, NativeToolResponse } from "../types/native-tools";
-import { GeminiPart } from "../gemini-client";
+import { GeminiUrlContextMetadata, GroundingMetadata, NativeToolResponse } from "../../types/native-tools";
+import { GeminiPart } from "../../types";
 
 /**
  * Processes response parts from the Gemini API that are related to native tools.

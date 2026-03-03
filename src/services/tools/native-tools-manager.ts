@@ -1,13 +1,13 @@
-import { Env, Tool } from "../types";
+import { Env, Tool } from "../../types";
 import {
 	GroundingMetadata,
 	NativeTool,
 	NativeToolsConfiguration,
 	NativeToolsEnvSettings,
 	NativeToolsRequestParams
-} from "../types/native-tools";
+} from "../../types/native-tools";
 import { CitationsProcessor } from "./citations-processor";
-import { NATIVE_TOOLS_DEFAULTS } from "../constants";
+import { NATIVE_TOOLS_DEFAULTS } from "../../config";
 
 /**
  * Manages the integration of native Gemini tools, including Google Search,

@@ -1,6 +1,6 @@
-import { StreamChunk, ReasoningData, GeminiFunctionCall, UsageData } from "./types";
-import { NativeToolResponse } from "./types/native-tools";
-import { OPENAI_CHAT_COMPLETION_OBJECT } from "./config";
+import { StreamChunk, ReasoningData, GeminiFunctionCall, UsageData } from "../types";
+import { NativeToolResponse } from "../types/native-tools";
+import { OPENAI_CHAT_COMPLETION_OBJECT } from "../config";
 
 // OpenAI API interfaces
 interface OpenAIToolCall {
@@ -100,20 +100,18 @@ export function createOpenAIStreamTransformer(model: string): TransformStream<St
 				case "thinking_content":
 					if (typeof chunk.data === "string") {
 						delta.content = chunk.data;
-						if (firstChunk) {
-							delta.role = "assistant";
-							firstChunk = false;
-						}
 					}
 					break;
 				case "real_thinking":
 					if (typeof chunk.data === "string") {
 						delta.reasoning = chunk.data;
+						delta.reasoning_content = chunk.data; // OpenAI SDK compatibility
 					}
 					break;
 				case "reasoning":
 					if (isReasoningData(chunk.data)) {
 						delta.reasoning = chunk.data.reasoning;
+						delta.reasoning_content = chunk.data.reasoning; // OpenAI SDK compatibility
 					}
 					break;
 				case "tool_code":
@@ -132,11 +130,8 @@ export function createOpenAIStreamTransformer(model: string): TransformStream<St
 								}
 							}
 						];
-						if (firstChunk) {
-							delta.role = "assistant";
-							delta.content = null;
-							firstChunk = false;
-						}
+						// OpenAI requires content: null when tool_calls are present
+						delta.content = null;
 					}
 					break;
 				case "native_tool":
@@ -156,12 +151,10 @@ export function createOpenAIStreamTransformer(model: string): TransformStream<St
 					return; // Don't send a chunk for usage data
 			}
 
+			// Unified first-chunk handling: add role to the first chunk for OpenAI compatibility
 			if (Object.keys(delta).length > 0) {
-				// Ensure the first chunk has role set for OpenAI compatibility
-				if (firstChunk && !delta.role) {
-					delta.role = "assistant";
-				}
 				if (firstChunk) {
+					delta.role = "assistant";
 					firstChunk = false;
 				}
 

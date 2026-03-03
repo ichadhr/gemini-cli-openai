@@ -1,4 +1,4 @@
-import { geminiCliModels, getAllModelIds } from "../models";
+import { geminiCliModels, getAllModelIds } from "../config";
 import { ModelInfo, MessageContent } from "../types";
 import { validateImageUrl } from "./image-utils";
 import { validatePdfBase64 } from "./pdf-utils";

@@ -1,4 +1,4 @@
-import { Env, OAuth2Credentials } from "./types";
+import { Env, OAuth2Credentials } from "../../types";
 import {
 	CODE_ASSIST_ENDPOINT,
 	CODE_ASSIST_API_VERSION,
@@ -7,7 +7,7 @@ import {
 	OAUTH_REFRESH_URL,
 	TOKEN_BUFFER_TIME,
 	KV_TOKEN_KEY
-} from "./config";
+} from "../../config";
 
 // Auth-related interfaces
 interface TokenRefreshResponse {

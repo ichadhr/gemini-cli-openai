@@ -1,4 +1,4 @@
-import { ModelInfo } from "./types";
+import { ModelInfo } from "../types";
 
 // --- Gemini CLI Models Configuration ---
 export const geminiCliModels: Record<string, ModelInfo> = {

@@ -1,52 +1,4 @@
-import { NativeToolResponse } from "./types/native-tools";
-
-// --- Safety Threshold Types ---
-export type SafetyThreshold =
-	| "OFF" // can be off: https://ai.google.dev/gemini-api/docs/safety-settings#safety-filtering-per-request
-	| "BLOCK_NONE"
-	| "BLOCK_FEW"
-	| "BLOCK_SOME"
-	| "BLOCK_ONLY_HIGH"
-	| "HARM_BLOCK_THRESHOLD_UNSPECIFIED";
-
-// --- Environment Variable Typings ---
-export interface Env {
-	GCP_SERVICE_ACCOUNT: string; // Now contains OAuth2 credentials JSON
-	GEMINI_PROJECT_ID?: string;
-	GEMINI_CLI_KV: KVNamespace; // Cloudflare KV for token caching
-	OPENAI_API_KEY?: string; // Optional API key for authentication
-	ENABLE_FAKE_THINKING?: string; // Optional flag to enable fake thinking output (set to "true" to enable)
-	ENABLE_REAL_THINKING?: string; // Optional flag to enable real Gemini thinking output (set to "true" to enable)
-	STREAM_THINKING_AS_CONTENT?: string; // Optional flag to stream thinking as content with <thinking> tags (set to "true" to enable)
-	ENABLE_AUTO_MODEL_SWITCHING?: string; // Optional flag to enable automatic fallback from pro to flash on 429 errors (set to "true" to enable)
-	GEMINI_MODERATION_HARASSMENT_THRESHOLD?: SafetyThreshold;
-	GEMINI_MODERATION_HATE_SPEECH_THRESHOLD?: SafetyThreshold;
-	GEMINI_MODERATION_SEXUALLY_EXPLICIT_THRESHOLD?: SafetyThreshold;
-	GEMINI_MODERATION_DANGEROUS_CONTENT_THRESHOLD?: SafetyThreshold;
-
-	// Native Tools Configuration
-	ENABLE_GEMINI_NATIVE_TOOLS?: string; // Enable native Gemini tools (default: false)
-	ENABLE_GOOGLE_SEARCH?: string; // Enable Google Search tool (default: false)
-	ENABLE_URL_CONTEXT?: string; // Enable URL Context tool (default: false)
-	GEMINI_TOOLS_PRIORITY?: string; // Tool priority strategy (native_first, custom_first, user_choice)
-	DEFAULT_TO_NATIVE_TOOLS?: string; // Default behavior when no custom tools provided (default: true)
-	ALLOW_REQUEST_TOOL_CONTROL?: string; // Allow request-level tool control (default: true)
-
-	// Citations and Grounding Configuration
-	ENABLE_INLINE_CITATIONS?: string; // Enable inline citations in responses (default: false)
-	INCLUDE_GROUNDING_METADATA?: string; // Include grounding metadata in responses (default: true)
-	INCLUDE_SEARCH_ENTRY_POINT?: string; // Include search entry point HTML (default: false)
-}
-
-// --- OAuth2 Credentials Interface ---
-export interface OAuth2Credentials {
-	access_token: string;
-	refresh_token: string;
-	scope: string;
-	token_type: string;
-	id_token: string;
-	expiry_date: number;
-}
+// Chat and Message Types
 
 // --- Model Information Interface ---
 export interface ModelInfo {
@@ -63,7 +15,7 @@ export interface ModelInfo {
 	thinking: boolean; // Indicates if the model supports thinking
 }
 
-// --- Chat Completion Request Interface ---
+// --- Chat Completion Request Types ---
 export type EffortLevel = "none" | "low" | "medium" | "high";
 
 export interface Tool {
@@ -159,7 +111,6 @@ export interface MessageContent {
 	};
 	input_pdf?: {
 		data: string; // base64 encoded PDF
-		// url?: string; // i think there's some way to pass a pdf url directly to gemini api, but i couldn't find how in docs
 	};
 }
 
@@ -189,35 +140,4 @@ export interface ChatCompletionUsage {
 	prompt_tokens: number;
 	completion_tokens: number;
 	total_tokens: number;
-}
-
-// --- Gemini Specific Types ---
-export interface GeminiFunctionCall {
-	name: string;
-	args: object;
-}
-
-// --- Usage and Reasoning Data Types ---
-export interface UsageData {
-	inputTokens: number;
-	outputTokens: number;
-}
-
-export interface ReasoningData {
-	reasoning: string;
-	toolCode?: string;
-}
-
-// --- Stream Chunk Types ---
-export interface StreamChunk {
-	type:
-		| "text"
-		| "usage"
-		| "reasoning"
-		| "thinking_content"
-		| "real_thinking"
-		| "tool_code"
-		| "native_tool"
-		| "grounding_metadata";
-	data: string | UsageData | ReasoningData | GeminiFunctionCall | NativeToolResponse;
 }

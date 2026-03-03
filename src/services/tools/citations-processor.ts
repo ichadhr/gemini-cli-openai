@@ -1,5 +1,5 @@
-import { Env } from "../types";
-import { GroundingMetadata, CitationSource } from "../types/native-tools";
+import { Env } from "../../types";
+import { GroundingMetadata, CitationSource } from "../../types/native-tools";
 
 /**
  * Processes grounding metadata to add inline citations to text responses.

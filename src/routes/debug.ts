@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { Env } from "../types";
-import { MultiAccountManager } from "../multi-account-manager";
-import { GeminiApiClient } from "../gemini-client";
+import { MultiAccountManager } from "../services/account";
+import { GeminiApiClient } from "../services";
 
 /**
  * Debug and testing routes for troubleshooting authentication and API functionality.

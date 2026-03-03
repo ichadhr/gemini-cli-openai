@@ -1,11 +1,11 @@
 import { Hono } from "hono";
 import { Env, ChatCompletionRequest, ChatCompletionResponse, ChatMessage, ModelInfo, MessageContent } from "../types";
-import { DEFAULT_MODEL, getAllModelIds } from "../models";
+import { DEFAULT_MODEL, getAllModelIds } from "../config";
 import { OPENAI_MODEL_OWNER } from "../config";
-import { DEFAULT_THINKING_BUDGET, MIME_TYPE_MAP } from "../constants";
-import { MultiAccountManager } from "../multi-account-manager";
-import { GeminiApiClient } from "../gemini-client";
-import { createOpenAIStreamTransformer } from "../stream-transformer";
+import { DEFAULT_THINKING_BUDGET, MIME_TYPE_MAP } from "../config";
+import { MultiAccountManager } from "../services/account";
+import { GeminiApiClient } from "../services";
+import { createOpenAIStreamTransformer } from "../transformers";
 import { isMediaTypeSupported, validateContent, validateModel } from "../utils/validation";
 import { errors } from "../utils/errors";
 import { Buffer } from "node:buffer";
@@ -14,6 +14,91 @@ import { Buffer } from "node:buffer";
  * OpenAI-compatible API routes for models and chat completions.
  */
 export const OpenAIRoute = new Hono<{ Bindings: Env }>();
+
+/**
+ * Detect if conversation is in tool-calling mode.
+ *
+ * Tool-calling conversations have these characteristics:
+ * - Messages with role: "tool" (tool responses)
+ * - Assistant messages with tool_calls array
+ * - Request includes tools parameter
+ *
+ * This detection is used to enable sticky account mapping, ensuring
+ * all turns in a multi-turn tool-calling conversation use the same
+ * GCP account for consistency.
+ *
+ * @param messages - Array of chat messages
+ * @returns boolean - True if this is a tool-calling conversation
+ */
+function isToolCallingConversation(messages: ChatMessage[]): boolean {
+	if (!messages || messages.length === 0) {
+		return false;
+	}
+
+	for (const msg of messages) {
+		// Check for tool role messages (tool responses)
+		if (msg.role === "tool") {
+			return true;
+		}
+
+		// Check for assistant messages with tool_calls
+		if (msg.role === "assistant" && msg.tool_calls && msg.tool_calls.length > 0) {
+			return true;
+		}
+	}
+
+	return false;
+}
+
+/**
+ * Get conversation ID from header or generate from first user message.
+ *
+ * Priority:
+ * 1. X-Conversation-ID header (if provided by client)
+ * 2. Hash of first user message content (fallback)
+ *
+ * The conversation ID is used for sticky account mapping in tool-calling
+ * conversations to ensure all turns use the same GCP account.
+ *
+ * @param messages - Array of chat messages
+ * @param headerId - Optional conversation ID from X-Conversation-ID header
+ * @returns string - The conversation ID to use
+ */
+function getConversationId(messages: ChatMessage[], headerId?: string): string {
+	// Priority 1: Use header if provided
+	if (headerId && headerId.trim().length > 0) {
+		return headerId.trim();
+	}
+
+	// Priority 2: Generate from first user message content
+	const firstUserMessage = messages.find((msg) => msg.role === "user");
+	if (firstUserMessage) {
+		// Extract text content from message
+		let content = "";
+		if (typeof firstUserMessage.content === "string") {
+			content = firstUserMessage.content;
+		} else if (Array.isArray(firstUserMessage.content)) {
+			// For array content, concatenate all text parts
+			content = firstUserMessage.content
+				.filter((part) => part.type === "text")
+				.map((part) => part.text || "")
+				.join(" ");
+		}
+
+		if (content.trim().length > 0) {
+			// Use djb2 hash algorithm (consistent with account-manager)
+			let hash = 5381;
+			for (let i = 0; i < content.length; i++) {
+				hash = ((hash << 5) + hash) + content.charCodeAt(i);
+			}
+			const hashHex = (hash >>> 0).toString(16);
+			return `conv_${hashHex}`;
+		}
+	}
+
+	// Fallback: Generate a random UUID (should rarely happen)
+	return `conv_${crypto.randomUUID()}`;
+}
 
 // List available models
 OpenAIRoute.get("/models", async (c) => {
@@ -165,6 +250,27 @@ OpenAIRoute.post("/chat/completions", async (c) => {
 		const multiAccountManager = new MultiAccountManager(c.env);
 		const geminiClient = new GeminiApiClient(c.env, multiAccountManager);
 
+		/**
+		 * Sticky Account for Tool-Calling Conversations
+		 *
+		 * Problem: Multi-turn tool calling breaks with per-request rotation because
+		 * each turn may hit a different GCP account, causing inconsistent configs,
+		 * unpredictable rate limits, and scattered logs.
+		 *
+		 * Solution: When a conversation involves tool calling, stick to ONE account
+		 * for ALL turns in that conversation.
+		 */
+		const isToolCalling = isToolCallingConversation(messages);
+		const conversationIdHeader = c.req.header("X-Conversation-ID");
+		const conversationId = getConversationId(messages, conversationIdHeader);
+
+		// Pre-initialize the account for this request
+		// This ensures sticky account mapping is set up before streaming begins
+		if (isToolCalling) {
+			console.log(`[Mitigation] Tool-calling conversation detected: ${conversationId.substring(0, 8)}...`);
+			await multiAccountManager.getAccountForConversation(conversationId);
+		}
+
 		if (stream) {
 			// Streaming response
 			const { readable, writable } = new TransformStream();
@@ -181,6 +287,7 @@ OpenAIRoute.post("/chat/completions", async (c) => {
 						thinkingBudget,
 						tools,
 						tool_choice,
+						conversationId: isToolCalling ? conversationId : undefined, // Pass conversationId for sticky account
 						...generationOptions
 					});
 
@@ -222,6 +329,7 @@ OpenAIRoute.post("/chat/completions", async (c) => {
 					thinkingBudget,
 					tools,
 					tool_choice,
+					conversationId: isToolCalling ? conversationId : undefined, // Pass conversationId for sticky account
 					...generationOptions
 				});
 

@@ -1,4 +1,4 @@
-import { AUTO_SWITCH_MODEL_MAP, RATE_LIMIT_STATUS_CODES } from "../constants";
+import { AUTO_SWITCH_MODEL_MAP, RATE_LIMIT_STATUS_CODES } from "../config";
 import { Env, ChatMessage, UsageData, StreamChunk } from "../types";
 
 /**

@@ -1,4 +1,4 @@
-import { Env } from "./types";
+import { Env } from "../../types";
 
 export interface AccountHealth {
 	isRateLimited: boolean;

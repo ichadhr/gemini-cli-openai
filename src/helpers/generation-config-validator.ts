@@ -1,10 +1,10 @@
-import { geminiCliModels } from "../models";
+import { geminiCliModels } from "../config";
 import {
 	DEFAULT_THINKING_BUDGET,
 	DEFAULT_TEMPERATURE,
 	REASONING_EFFORT_BUDGETS,
 	GEMINI_SAFETY_CATEGORIES
-} from "../constants";
+} from "../config";
 import { ChatCompletionRequest, Env, EffortLevel, SafetyThreshold } from "../types";
 import { NativeToolsConfiguration } from "../types/native-tools";
 
