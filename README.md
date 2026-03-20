@@ -1,7 +1,5 @@
 # 🚀 Gemini CLI OpenAI Worker
 
-[!["Buy Me A Coffee"](https://www.buymeacoffee.com/assets/img/custom_images/orange_img.png)](https://www.buymeacoffee.com/mrproper)
-
 Transform Google's Gemini models into OpenAI-compatible endpoints using Cloudflare Workers. Access Google's most advanced AI models through familiar OpenAI API patterns, powered by OAuth2 authentication and the same infrastructure that drives the official Gemini CLI.
 
 ## ✨ Features
@@ -16,7 +14,8 @@ Transform Google's Gemini models into OpenAI-compatible endpoints using Cloudfla
 - 🌐 **Third-party Integration** - Compatible with Open WebUI, ChatGPT clients, and more
 - ⚡ **Cloudflare Workers** - Global edge deployment with low latency
 - 🔄 **Smart Token Caching** - Intelligent token management with KV storage
-- 🔋 **Multi-Account Support** - High availability with automatic rotation and rate limit handling
+- 🔋 **Multi-Account Support** - High availability with automatic round-robin rotation and rate limit handling
+- 🎯 **Sticky Sessions** - Tool-calling conversations stay on the same account for consistency
 - 🆓 **Free Tier Access** - Leverage Google's free tier through Code Assist API
 - 📡 **Real-time Streaming** - Server-sent events for live responses with token usage
 - 🎭 **Multiple Models** - Access to latest Gemini models including experimental ones
@@ -25,6 +24,9 @@ Transform Google's Gemini models into OpenAI-compatible endpoints using Cloudfla
 
 | Model ID | Context Window | Max Tokens | Thinking Support | Description |
 |----------|----------------|------------|------------------|-------------|
+| `gemini-3.1-flash-lite-preview` | 1M | 65K | ✅ | Google's Gemini 3.1 Flash Lite Preview model with reasoning capabilities |
+| `gemini-3-pro-preview` | 1M | 65K | ✅ | Google's Gemini 3.0 Pro Preview model with reasoning capabilities |
+| `gemini-3-flash-preview` | 1M | 65K | ✅ | Google's Gemini 3.0 Flash Preview model with reasoning capabilities |
 | `gemini-2.5-pro` | 1M | 65K | ✅ | Latest Gemini 2.5 Pro model with reasoning capabilities |
 | `gemini-2.5-flash` | 1M | 65K | ✅ | Fast Gemini 2.5 Flash model with reasoning capabilities |
 | `gemini-2.5-flash-lite` | 1M | 65K | ✅ | Lightweight version of Gemini 2.5 Flash model with reasoning capabilities |
@@ -817,7 +819,15 @@ The worker acts as a translation layer, converting OpenAI API calls to Google's 
 4. Test thoroughly
 5. Submit a pull request
 
-## 📄 License
+## � Documentation
+
+For detailed architecture and advanced topics, see the [docs/](./docs/) folder:
+
+- **[Architecture Overview](./docs/ARCHITECTURE.md)** - System design, components, and data flow
+- **[Multi-Account Guide](./docs/multi-account-guide.md)** - Setup and configure multiple GCP accounts
+- **[Sticky Sessions](./docs/sticky-sessions.md)** - Tool-calling conversation design
+
+## �📄 License
 
 This codebase is provided for personal use and self-hosting only.
 
@@ -836,6 +846,3 @@ Any other form of distribution, sublicensing, or commercial use is strictly proh
 ---
 
 **⚠️ Important**: This project uses Google's Code Assist API which may have usage limits and terms of service. Please ensure compliance with Google's policies when using this worker.
-
-
-[![Star History Chart](https://api.star-history.com/svg?repos=GewoonJaap/gemini-cli-openai&type=Date)](https://www.star-history.com/#GewoonJaap/gemini-cli-openai&Date)

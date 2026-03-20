@@ -13,20 +13,25 @@ const compat = new FlatCompat({
     allConfig: js.configs.all
 });
 
-export default defineConfig([{
-    extends: compat.extends("plugin:@typescript-eslint/recommended"),
-    rules: {
-        "no-unused-vars": "off", // Disable the base rule
-        "@typescript-eslint/no-unused-vars": ["error", {
-            "args": "all", // Flag all unused arguments
-            "argsIgnorePattern": "^$", // Do not ignore any arguments
-            "varsIgnorePattern": "^$", // Do not ignore any variables
-            "caughtErrorsIgnorePattern": "^$" // Do not ignore caught errors
-        }]
+export default defineConfig([
+    {
+        ignores: ["dist/**", "node_modules/**", ".wrangler/**"]
     },
-    languageOptions: {
-        parser: tsParser,
-        ecmaVersion: 2021,
-        sourceType: "module",
-    },
-}]);
+    {
+        extends: compat.extends("plugin:@typescript-eslint/recommended"),
+        rules: {
+            "no-unused-vars": "off", // Disable the base rule
+            "@typescript-eslint/no-unused-vars": ["error", {
+                "args": "all", // Flag all unused arguments
+                "argsIgnorePattern": "^$", // Do not ignore any arguments
+                "varsIgnorePattern": "^$", // Do not ignore any variables
+                "caughtErrorsIgnorePattern": "^$" // Do not ignore caught errors
+            }]
+        },
+        languageOptions: {
+            parser: tsParser,
+            ecmaVersion: 2021,
+            sourceType: "module",
+        },
+    }
+]);
