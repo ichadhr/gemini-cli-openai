@@ -84,7 +84,7 @@ export class GeminiApiClient {
 			throw new Error("Project ID discovery failed. Please set the GEMINI_PROJECT_ID environment variable.");
 		} catch (error: unknown) {
 			const errorMessage = error instanceof Error ? error.message : String(error);
-			console.error(`Failed to discover project ID for GCP_SERVICE_ACCOUNT_${authManager.id}:`, errorMessage);
+			console.error(`Failed to discover project ID for GCP_SERVICE_ACCOUNT_${authManager.id}: ${authManager.accountName} -`, errorMessage);
 			throw new Error(
 				"Could not discover project ID. Make sure you're authenticated and consider setting GEMINI_PROJECT_ID."
 			);
@@ -127,7 +127,7 @@ export class GeminiApiClient {
 			? await this.multiAccountManager.getAccountForConversation(options.conversationId)
 			: await this.multiAccountManager.getAccount();
 		await authManager.initializeAuth();
-		console.log(`[Mitigation] Initial account selection: GCP_SERVICE_ACCOUNT_${authManager.id}`);
+		console.log(`[Mitigation] Initial account selection: GCP_SERVICE_ACCOUNT_${authManager.id}: ${authManager.accountName}`);
 		const projectId = await this.discoverProjectId(authManager);
 
 		const contents = this.messageFormatter.formatMessages(systemPrompt, messages);

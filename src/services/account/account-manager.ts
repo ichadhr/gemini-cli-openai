@@ -139,7 +139,7 @@ export class MultiAccountManager {
 				return account;
 			}
 
-			console.log(`Skipping unhealthy GCP_SERVICE_ACCOUNT_${accountId}`);
+			console.log(`Skipping unhealthy GCP_SERVICE_ACCOUNT_${accountId}: ${account.accountName}`);
 			currentIndex = (currentIndex + 1) % this.accounts.length;
 			attempts++;
 		}
@@ -176,7 +176,8 @@ export class MultiAccountManager {
 			// Found existing sticky mapping - use the same account
 			const account = this.accounts.find((acc) => acc.id === stickyAccountId);
 			if (account && (await this.healthTracker.isAccountHealthy(stickyAccountId))) {
-				console.log(`[Mitigation] Sticky account: Using GCP_SERVICE_ACCOUNT_${stickyAccountId} for conversation ${conversationId.substring(0, 8)}...`);
+				const accountName = account.accountName;
+				console.log(`[Mitigation] Sticky account: Using GCP_SERVICE_ACCOUNT_${stickyAccountId}: ${accountName} for conversation ${conversationId.substring(0, 8)}...`);
 				return account;
 			}
 
@@ -188,7 +189,7 @@ export class MultiAccountManager {
 		// No sticky mapping exists - get a fresh account and store it
 		const account = await this.getAccount();
 		await this.setStickyAccount(conversationId, account.id);
-		console.log(`[Mitigation] Sticky account: Mapped GCP_SERVICE_ACCOUNT_${account.id} to conversation ${conversationId.substring(0, 8)}...`);
+		console.log(`[Mitigation] Sticky account: Mapped GCP_SERVICE_ACCOUNT_${account.id}: ${account.accountName} to conversation ${conversationId.substring(0, 8)}...`);
 
 		return account;
 	}

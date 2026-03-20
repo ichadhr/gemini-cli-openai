@@ -1,4 +1,5 @@
 import { Env, OAuth2Credentials } from "../../types";
+import { parseEmailFromIdToken, getAccountName } from "../../utils/email-parser";
 import {
 	CODE_ASSIST_ENDPOINT,
 	CODE_ASSIST_API_VERSION,
@@ -39,6 +40,8 @@ export class AuthManager {
 	private env: Env;
 	private accessToken: string | null = null;
 	public readonly id: number;
+	public readonly email: string;
+	public readonly accountName: string;
 	private credentials: OAuth2Credentials | null = null;
 	private kvTokenKey: string;
 
@@ -47,6 +50,10 @@ export class AuthManager {
 		this.id = id;
 		this.credentials = credentials || null;
 		this.kvTokenKey = `${KV_TOKEN_KEY}_${id}`;
+		// Extract email from id_token for better logging
+		const email = credentials ? parseEmailFromIdToken(credentials.id_token) : null;
+		this.email = email || `user_${id}@unknown`;
+		this.accountName = getAccountName(email);
 	}
 
 	/**

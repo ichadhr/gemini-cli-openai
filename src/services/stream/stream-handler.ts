@@ -53,7 +53,7 @@ export class StreamHandler {
 		// Ensure auth is initialized (redundant but safe)
 		await authManager.initializeAuth();
 		console.log(
-			`[Mitigation] Stream request attempt ${retryAttempt + 1} with account GCP_SERVICE_ACCOUNT_${authManager.id}${originalModel ? `, model: ${originalModel}` : ""}`
+			`[Mitigation] Stream request attempt ${retryAttempt + 1} with account GCP_SERVICE_ACCOUNT_${authManager.id}: ${authManager.accountName}${originalModel ? `, model: ${originalModel}` : ""}`
 		);
 
 		const citationsProcessor = new CitationsProcessor(this.env);
@@ -69,7 +69,7 @@ export class StreamHandler {
 		if (!response.ok) {
 			// Handle 401: Clear token and retry with SAME account (refresh token flow) if not already retried
 			if (response.status === 401 && !isRetry) {
-				console.log(`[Mitigation] Sequence step: 401 error - Token refresh for GCP_SERVICE_ACCOUNT_${authManager.id}`);
+				console.log(`[Mitigation] Sequence step: 401 error - Token refresh for GCP_SERVICE_ACCOUNT_${authManager.id}: ${authManager.accountName}`);
 				await authManager.clearTokenCache();
 				await authManager.initializeAuth();
 				yield* this.performStreamRequest(
@@ -88,7 +88,7 @@ export class StreamHandler {
 			// Handle Rate Limits (429/503): Report failure and switch account
 			if (response.status === 429 || response.status === 503) {
 				console.log(
-					`[Mitigation] Sequence step: Rate limit (${response.status}) - Account rotation initiated from GCP_SERVICE_ACCOUNT_${authManager.id}`
+					`[Mitigation] Sequence step: Rate limit (${response.status}) - Account rotation initiated from GCP_SERVICE_ACCOUNT_${authManager.id}: ${authManager.accountName}`
 				);
 				await this.multiAccountManager.reportFailure(authManager, response.status);
 
@@ -100,7 +100,7 @@ export class StreamHandler {
 					// Get a NEW account for retry
 					const nextAuthManager = await this.multiAccountManager.getAccount();
 					console.log(
-						`[Mitigation] Account rotation: Attempt ${retryAttempt + 1}/${maxRetries} - Selected GCP_SERVICE_ACCOUNT_${nextAuthManager.id}`
+						`[Mitigation] Account rotation: Attempt ${retryAttempt + 1}/${maxRetries} - Selected GCP_SERVICE_ACCOUNT_${nextAuthManager.id}: ${nextAuthManager.accountName}`
 					);
 
 					// NEW: Update sticky mapping if this is a tool-calling conversation
