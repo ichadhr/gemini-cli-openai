@@ -51,26 +51,35 @@ function isToolCallingConversation(messages: ChatMessage[]): boolean {
 }
 
 /**
- * Get conversation ID from header or generate from first user message.
+ * Get conversation ID for sticky session.
+ * Returns undefined for non-tool-calling conversations (use round-robin).
  *
  * Priority:
- * 1. X-Conversation-ID header (if provided by client)
- * 2. Hash of first user message content (fallback)
- *
- * The conversation ID is used for sticky account mapping in tool-calling
- * conversations to ensure all turns use the same GCP account.
+ * 1. Client-provided X-Conversation-ID header (explicit)
+ * 2. Hash of first user message (for tool-calling only)
+ * 3. undefined (for normal chat - use round-robin)
  *
  * @param messages - Array of chat messages
  * @param headerId - Optional conversation ID from X-Conversation-ID header
- * @returns string - The conversation ID to use
+ * @returns string | undefined - The conversation ID, or undefined for round-robin
  */
-function getConversationId(messages: ChatMessage[], headerId?: string): string {
-	// Priority 1: Use header if provided
+function getConversationId(messages: ChatMessage[], headerId?: string): string | undefined {
+	// Priority 1: Use client-provided header
 	if (headerId && headerId.trim().length > 0) {
 		return headerId.trim();
 	}
 
-	// Priority 2: Generate from first user message content
+	// Priority 2: Check if this is a tool-calling conversation
+	const hasToolCalls = messages.some(msg =>
+		msg.role === "tool" ||
+		(msg.role === "assistant" && msg.tool_calls && msg.tool_calls.length > 0)
+	);
+
+	if (!hasToolCalls) {
+		return undefined; // Normal chat - use round-robin
+	}
+
+	// Priority 3: Generate from first user message
 	const firstUserMessage = messages.find((msg) => msg.role === "user");
 	if (firstUserMessage) {
 		// Extract text content from message
@@ -263,13 +272,6 @@ OpenAIRoute.post("/chat/completions", async (c) => {
 		const isToolCalling = isToolCallingConversation(messages);
 		const conversationIdHeader = c.req.header("X-Conversation-ID");
 		const conversationId = getConversationId(messages, conversationIdHeader);
-
-		// Pre-initialize the account for this request
-		// This ensures sticky account mapping is set up before streaming begins
-		if (isToolCalling) {
-			console.log(`[Mitigation] Tool-calling conversation detected: ${conversationId.substring(0, 8)}...`);
-			await multiAccountManager.getAccountForConversation(conversationId);
-		}
 
 		if (stream) {
 			// Streaming response

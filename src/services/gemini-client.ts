@@ -123,8 +123,8 @@ export class GeminiApiClient {
 	): AsyncGenerator<StreamChunk> {
 		// Get account ONCE for this request to ensure consistency
 		// Use sticky account if conversationId is provided (tool-calling mode)
-		const authManager = options?.conversationId
-			? await this.multiAccountManager.getAccountForConversation(options.conversationId)
+		const authManager = options?.conversationId && messages
+			? await this.multiAccountManager.getAccountForConversation(options.conversationId, messages)
 			: await this.multiAccountManager.getAccount();
 		await authManager.initializeAuth();
 		console.log(`[Mitigation] Initial account selection: GCP_SERVICE_ACCOUNT_${authManager.id}: ${authManager.accountName}`);

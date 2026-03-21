@@ -32,21 +32,53 @@ export class NativeToolsManager {
 		requestParams: NativeToolsRequestParams,
 		modelId: string
 	): NativeToolsConfiguration {
-		// Handle disabled native tools
+		// Handle disabled native tools - always use custom
 		if (!this.envSettings.enableNativeTools) {
 			return this.createCustomOnlyConfig(customTools);
 		}
 
-		// Handle Google Search + URL Context combination
+		// IMPORTANT: Gemini API does NOT allow mixing native and custom tools
+		// We must choose ONE or the OTHER, never both
+
+		// If custom tools are provided by client
+		if (customTools && customTools.length > 0) {
+			// Check if user explicitly requested native tools INSTEAD of custom
+			if (requestParams.enableSearch === true || requestParams.enableUrlContext === true) {
+				// User explicitly wants native tools - use NATIVE ONLY
+				return this.createNativeOnlyConfig(requestParams, modelId);
+			}
+			// Default: use CUSTOM ONLY (client-provided tools)
+			return this.createCustomOnlyConfig(customTools);
+		}
+
+		// No custom tools provided - check if native tools are requested
 		const searchAndUrlRequested =
 			this.shouldEnableGoogleSearch(requestParams) || this.shouldEnableUrlContext(requestParams);
 
 		if (searchAndUrlRequested) {
-			return this.createSearchAndUrlConfig(requestParams, customTools, modelId);
+			// Use NATIVE ONLY
+			return this.createNativeOnlyConfig(requestParams, modelId);
 		}
 
-		// No native tools requested - use custom tools
-		return this.createCustomOnlyConfig(customTools);
+		// No tools at all
+		return this.createCustomOnlyConfig([]);
+	}
+
+	/**
+	 * Creates native-only configuration (no custom tools).
+	 */
+	private createNativeOnlyConfig(
+		requestParams: NativeToolsRequestParams,
+		modelId: string
+	): NativeToolsConfiguration {
+		const nativeTools = this.createNativeToolsArray(requestParams, modelId);
+		return {
+			useNativeTools: true,
+			useCustomTools: false,
+			nativeTools,
+			priority: "native",
+			toolType: "search_and_url"
+		};
 	}
 
 	/**

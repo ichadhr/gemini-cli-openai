@@ -1,4 +1,4 @@
-import { Env, OAuth2Credentials } from "../../types";
+import { Env, OAuth2Credentials, ChatMessage } from "../../types";
 import { AuthManager } from "../auth/auth-manager";
 import { AccountHealthTracker } from "./health";
 
@@ -149,47 +149,75 @@ export class MultiAccountManager {
 	}
 
 	/**
-	 * Get account for conversation, using sticky mapping for tool-calling.
-	 *
-	 * Problem: Multi-turn tool calling breaks with per-request rotation.
-	 * Each turn may hit a different account, causing:
-	 * - Inconsistent project configurations
-	 * - Unpredictable rate limit handling
-	 * - Scattered logs across accounts
-	 *
-	 * Solution: Keep same account for all turns in tool-calling conversations.
-	 *
-	 * @param conversationId - Unique identifier for the conversation (from X-Conversation-ID header or hash)
-	 * @returns AuthManager - The account to use for this conversation
+	 * Mark a conversation as having used tools (for native tool detection).
+	 * Custom tools are detected from messages, native tools from response metadata.
+	 * KV Key: tool_usage:{conversation_id}
+	 * TTL: 1 hour (sufficient for conversation lifetime)
 	 */
-	public async getAccountForConversation(conversationId?: string): Promise<AuthManager> {
-		// If no conversation ID provided, fall back to normal rotation
-		if (!conversationId) {
-			console.log("[Mitigation] No conversation ID provided, using normal account rotation");
+	public async markConversationAsToolUsing(conversationId: string): Promise<void> {
+		try {
+			const key = `tool_usage:${conversationId}`;
+			await this.env.GEMINI_CLI_KV.put(key, "true", { expirationTtl: 3600 });
+			console.log(`[Sticky] Marked conversation ${conversationId.substring(0, 8)}... as tool-using`);
+		} catch (e) {
+			console.error(`[Sticky] Failed to mark conversation ${conversationId.substring(0, 8)}... as tool-using:`, e);
+		}
+	}
+
+	/**
+	 * Check if a conversation has used tools (custom or native).
+	 */
+	public async hasUsedTools(conversationId: string): Promise<boolean> {
+		try {
+			const key = `tool_usage:${conversationId}`;
+			const value = await this.env.GEMINI_CLI_KV.get(key);
+			return value === "true";
+		} catch (e) {
+			console.error(`[Sticky] Failed to check tool usage for conversation ${conversationId.substring(0, 8)}...:`, e);
+			return false;
+		}
+	}
+
+	/**
+	 * Get account for conversation with proper tool detection.
+	 * Uses sticky session if tools were used (custom or native), otherwise round-robin.
+	 */
+	public async getAccountForConversation(
+		conversationId: string,
+		messages: ChatMessage[]
+	): Promise<AuthManager> {
+		// Check if tools were EVER used (from message history - custom tools)
+		const hasCustomTools = messages.some(msg =>
+			msg.role === "tool" ||
+			(msg.role === "assistant" && (msg.tool_calls?.length ?? 0) > 0)
+		);
+
+		// Check if conversation was marked as tool-using (for native tools)
+		const hasNativeTools = await this.hasUsedTools(conversationId);
+
+		// If no tools ever used, use round-robin
+		if (!hasCustomTools && !hasNativeTools) {
+			console.log(`[Sticky] No tools used for conversation ${conversationId.substring(0, 8)}..., using round-robin`);
 			return this.getAccount();
 		}
 
-		// Check if there's already a sticky mapping for this conversation
+		// Tools were used (custom or native) - use sticky session
 		const stickyAccountId = await this.getStickyAccountId(conversationId);
 
 		if (stickyAccountId !== null) {
-			// Found existing sticky mapping - use the same account
 			const account = this.accounts.find((acc) => acc.id === stickyAccountId);
 			if (account && (await this.healthTracker.isAccountHealthy(stickyAccountId))) {
-				const accountName = account.accountName;
-				console.log(`[Mitigation] Sticky account: Using GCP_SERVICE_ACCOUNT_${stickyAccountId}: ${accountName} for conversation ${conversationId.substring(0, 8)}...`);
+				console.log(`[Sticky] Using sticky account GCP_SERVICE_ACCOUNT_${stickyAccountId} for conversation ${conversationId.substring(0, 8)}...`);
 				return account;
 			}
-
-			// Account not found or unhealthy - clear the stale mapping and get a new one
-			console.log(`[Mitigation] Sticky account ${stickyAccountId} unhealthy, clearing mapping for conversation ${conversationId.substring(0, 8)}...`);
-			await this.clearStickyAccount(conversationId);
+			// Account unhealthy - will rotate below
+			console.log(`[Sticky] Sticky account ${stickyAccountId} unhealthy, rotating...`);
 		}
 
-		// No sticky mapping exists - get a fresh account and store it
+		// No sticky mapping or unhealthy - get fresh account and create mapping
 		const account = await this.getAccount();
 		await this.setStickyAccount(conversationId, account.id);
-		console.log(`[Mitigation] Sticky account: Mapped GCP_SERVICE_ACCOUNT_${account.id}: ${account.accountName} to conversation ${conversationId.substring(0, 8)}...`);
+		console.log(`[Sticky] Created new sticky mapping: ${conversationId.substring(0, 8)}... → GCP_SERVICE_ACCOUNT_${account.id}`);
 
 		return account;
 	}

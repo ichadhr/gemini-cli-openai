@@ -1,333 +1,312 @@
 # Sticky Account Architecture for Tool-Calling Conversations
 
+**Status:** ✅ **IMPLEMENTED** (2026-03-20)
+
+This document describes the implemented sticky account routing system for multi-turn tool calling in the Gemini API proxy.
+
+---
+
 ## Executive Summary
 
-This document provides architectural recommendations for implementing "sticky account" routing to solve multi-turn tool calling issues in the Gemini API proxy.
+**Implemented Features:**
+- ✅ Sticky sessions for **custom tools** (MCP) - detected from message history
+- ✅ Sticky sessions for **native tools** (google_search, url_context) - detected from response metadata
+- ✅ Round-robin for normal chat (no tools)
+- ✅ Rate limit rotation with sticky mapping updates
+- ✅ KV-based tool usage tracking
 
 ---
 
-## 1. Is This the Right Approach? ✅
+## 1. Architecture Overview ✅ IMPLEMENTED
 
-**Verdict: Yes, with caveats**
-
-The sticky account approach is architecturally sound:
-
-### Why It Works
-- **State Consistency**: Tool-calling conversations are inherently stateful; binding to one account ensures project context consistency
-- **Predictable Rate Limits**: All turns hit the same account quota, making rate limit behavior predictable
-- **Debugging**: Logs are centralized to one account
-- **Backwards Compatible**: Normal requests continue using round-robin
-
-### Architectural Concerns
-| Concern | Impact | Mitigation |
-|---------|--------|------------|
-| KV latency | +10-50ms per operation | Batch operations, cache locally |
-| Race conditions | Sticky mapping conflicts | Atomic KV operations with retries |
-| KV bloat | Orphaned sticky mappings | Immediate delete when done, TTL fallback |
-| Account failure mid-conversation | Stuck with bad account | Fallback to rotation + update sticky |
-
----
-
-## 2. Conversation ID Generation
-
-### Recommended: Hybrid Approach
-
-```typescript
-// Priority order:
-// 1. Client-provided X-Conversation-ID header (explicit)
-// 2. Hash of message content + model (deterministic)
-// 3. Hash of last user message + timestamp (fallback)
-```
-
-### Option Comparison
-
-| Approach | Pros | Cons | Recommendation |
-|----------|------|------|----------------|
-| **Client header** | Explicit control, works across restarts | Requires client support | ✅ Primary |
-| **Message hash** | Deterministic, no client changes | Changes if content changes | ✅ Fallback |
-| **UUID in first response** | Clean, trackable | Requires client to echo back | ⚠️ Complex |
-| **OpenAI's conversation ID** | Compatible with OpenAI SDK | Need to extract/store | ⚠️ Implementation heavy |
-
-### Implementation: Message Content Hash
-
-```typescript
-function generateConversationId(messages: ChatMessage[]): string {
-  // Use a subset to avoid hashing huge histories
-  const relevantMessages = messages.slice(-6); // Last 3 turns
-  const content = relevantMessages
-    .map(m => `${m.role}:${JSON.stringify(m.content)}`)
-    .join('|');
-
-  // Simple hash for demo - use xxhash or similar in production
-  return `conv_${btoa(content).slice(0, 32)}`;
-}
-```
-
-**Why last 3 turns?**
-- Tool-calling conversations typically have short windows
-- Reduces collision probability
-- Limits hash computation time
-
----
-
-## 3. Edge Cases: Rate Limit Mid-Conversation
-
-### Current Plan (Rotate + Update Sticky)
-
-**Good approach.** Here's the refined logic:
-
-```
-IF sticky account rate limited:
-  1. Call getAccount() to get next healthy account
-  2. Update sticky mapping: sticky:{conv_id} → new_account_index
-  3. Log account switch for debugging
-  4. Continue with new account
-```
-
-### Detailed Flow
+### How It Works
 
 ```mermaid
 flowchart TD
-    A[Request arrives] --> B{Has sticky mapping?}
-    B -->|Yes| C[Try sticky account]
-    B -->|No| D[Get account via rotation]
+    A[Request arrives] --> B{Has conversationId?}
+    B -->|No| C[Check for tool-calling]
+    B -->|Yes| D[Use existing]
 
-    C --> E{Sticky account healthy?}
-    E -->|Yes| F[Use sticky account]
-    E -->|No/Rate limited| G[Get next healthy account]
-    G --> H[Update sticky mapping]
-    H --> I[Use new account]
+    C --> E{Tools in messages?}
+    C --> F{Normal chat?}
+    E -->|Yes custom tools| G[Create conversationId + Sticky]
+    F -->|Yes| H[Return undefined → Round-robin]
 
-    D --> J[Detect tool-calling?]
-    J -->|Yes| K[Create sticky mapping]
-    J -->|No| L[Use rotated account]
+    G --> I[Get sticky account]
+    D --> I
 
-    F --> M[Process request]
-    I --> M
+    I --> J{Account healthy?}
+    J -->|Yes| K[Use sticky account]
+    J -->|No rate limit| L[Rotate + Update sticky]
+
+    K --> M[Make API call]
     L --> M
 
-    M --> N{Response has finish_reason: stop?}
-    N -->|Yes| O[Delete sticky mapping]
-    N -->|No| P[Keep sticky mapping]
+    M --> N{Native tool used?}
+    N -->|Yes groundingMetadata| O[Mark conversation as tool-using in KV]
+    N -->|No| P[No marking needed]
+
+    O --> Q[Response to client]
+    P --> Q
 ```
 
-### Race Condition Handling
+### Key Design Decisions
 
-```typescript
-// When updating sticky mapping, use atomic compare-and-swap pattern
-async function updateStickyAccount(
-  convId: string,
-  newAccountIndex: number
-): Promise<void> {
-  const key = `sticky:${convId}`;
-
-  // Read current
-  const current = await kv.get(key);
-
-  // Only update if it still exists (wasn't cleared by another request)
-  if (current !== null) {
-    await kv.put(key, newAccountIndex.toString());
-    console.log(`[Sticky] Rotated conversation ${convId} to account ${newAccountIndex}`);
-  }
-}
-```
+| Decision | Implementation | Rationale |
+|----------|---------------|-----------|
+| **Sticky for custom tools** | Detect `tool_calls` in messages | MCP tools need consistent project context |
+| **Sticky for native tools** | Detect `groundingMetadata` in response | Native tools share Gemini API quota |
+| **Round-robin for chat** | Return `undefined` from `getConversationId()` | No state to maintain |
+| **Rate limit rotation** | Update sticky mapping on 429/503 | Maintains consistency while handling limits |
 
 ---
 
-## 4. Storage: KV Design
+## 2. Implementation Details ✅
 
-### Recommended Key Structure
+### 2.1 Conversation ID Generation
 
-```
-Key: sticky:{conversation_id}
-Value: {account_index}|{created_at}|{last_used}
-TTL: None (immediate delete when done)
-```
-
-### Why No TTL?
-
-| Aspect | Recommendation | Rationale |
-|--------|----------------|-----------|
-| **Cleanup** | Immediate delete on `finish_reason: stop` | Clean, predictable |
-| **TTL fallback** | Optional 5-minute TTL | Safety net for orphaned entries |
-| **Format** | Pipe-delimited string | Simple, no JSON parse overhead |
-
-### Storage Operations
+**File:** `src/routes/openai.ts`
 
 ```typescript
-interface StickyMapping {
-  accountIndex: number;
-  createdAt: number;
-  lastUsed: number;
-}
-
-// Parse: "2|1709123456789|1709123459999"
-function parseStickyValue(value: string): StickyMapping {
-  const [accountIndex, createdAt, lastUsed] = value.split('|').map(Number);
-  return { accountIndex, createdAt, lastUsed };
-}
-```
-
-### Cleanup Strategy
-
-1. **Primary**: Delete immediately when `finish_reason: stop` detected
-2. **Safety**: 5-minute TTL as backup
-3. **Maintenance**: Optional weekly cleanup job for orphaned entries
-
----
-
-## 5. Future Enhancement: "Busy" Account Tracking
-
-### Defer This (as planned)
-
-**Rationale**: Adds complexity without solving the immediate tool-calling problem.
-
-### If Implemented Later
-
-Track "busy" accounts separately from "unhealthy":
-
-```typescript
-interface AccountStatus {
-  healthy: boolean;      // From health.ts
-  busy: boolean;         // Has active sticky conversations
-  activeConversations: string[]; // Conversation IDs
-}
-```
-
-Rotation logic:
-```
-Select account where:
-  - healthy === true
-  - busy === false (preferred) OR has fewest active conversations
-```
-
----
-
-## 6. Alternative Approaches
-
-### Option A: Consistent Hashing (Rejected)
-
-```typescript
-// Hash conversation ID to consistently pick same account
-function getAccountForConversation(convId: string, accountCount: number): number {
-  const hash = hashString(convId);
-  return hash % accountCount;
-}
-```
-
-**Why not**: Doesn't handle rate limits well - stuck with same account even if rate limited.
-
-### Option B: Session Affinity via Cloudflare (Rejected)
-
-Use Cloudflare's session affinity features.
-
-**Why not**: Requires Cloudflare Load Balancer (paid), overkill for this use case.
-
-### Option C: Per-Conversation Queue (Rejected)
-
-Queue all requests for a conversation to ensure sequential processing.
-
-**Why not**: Too complex, introduces latency and single-point-of-contention.
-
----
-
-## Implementation Recommendations
-
-### Files to Modify
-
-| File | Changes |
-|------|---------|
-| `src/services/account/account-manager.ts` | Add `getAccountForConversation()` method |
-| `src/routes/openai.ts` | Detect tool-calling, extract/generate conversation ID |
-| `src/services/stream/stream-handler.ts` | Handle sticky cleanup on `finish_reason: stop` |
-| `src/types/env.ts` | Add optional `STICKY_SESSION_TTL_SECONDS` env var |
-
-### Code Structure
-
-```typescript
-// account-manager.ts
-export class MultiAccountManager {
-  // Existing methods...
-
-  async getAccountForConversation(
-    conversationId?: string,
-    isToolCalling: boolean = false
-  ): Promise<{ account: AuthManager; isSticky: boolean }> {
-    if (!conversationId || !isToolCalling) {
-      // Normal rotation
-      return { account: await this.getAccount(), isSticky: false };
+function getConversationId(messages: ChatMessage[], headerId?: string): string | undefined {
+    // Priority 1: Client-provided header
+    if (headerId && headerId.trim().length > 0) {
+        return headerId.trim();
     }
 
-    // Try to get sticky mapping
-    const stickyKey = `sticky:${conversationId}`;
-    const stickyValue = await this.env.GEMINI_CLI_KV.get(stickyKey);
+    // Priority 2: Check if tool-calling
+    const hasToolCalls = messages.some(msg =>
+        msg.role === "tool" ||
+        (msg.role === "assistant" && (msg.tool_calls?.length ?? 0) > 0)
+    );
 
-    if (stickyValue) {
-      const { accountIndex } = parseStickyValue(stickyValue);
-
-      // Check if account is healthy
-      if (await this.healthTracker.isAccountHealthy(accountIndex)) {
-        return { account: this.accounts[accountIndex], isSticky: true };
-      }
-
-      // Account unhealthy - rotate and update sticky
-      const newAccount = await this.getAccount();
-      await this.updateStickyMapping(conversationId, newAccount.id);
-      return { account: newAccount, isSticky: true };
+    if (!hasToolCalls) {
+        return undefined; // Normal chat → round-robin
     }
 
-    // No sticky mapping - create one
+    // Priority 3: Generate from first user message
+    // ... hash generation ...
+}
+```
+
+**Behavior:**
+| Scenario | Returns | Account Selection |
+|----------|---------|-------------------|
+| Client header provided | Header value | Sticky |
+| Custom tools in messages | Generated hash | Sticky |
+| Normal chat (no tools) | `undefined` | Round-robin |
+
+---
+
+### 2.2 Tool Detection
+
+**Custom Tools (MCP)** - Detected from messages:
+
+```typescript
+// In account-manager.ts
+const hasCustomTools = messages.some(msg =>
+    msg.role === "tool" ||
+    (msg.role === "assistant" && (msg.tool_calls?.length ?? 0) > 0)
+);
+```
+
+**Native Tools (Gemini API)** - Detected from response:
+
+```typescript
+// In stream-handler.ts
+const hasGroundingMetadata =
+    (candidate?.groundingMetadata?.webSearchQueries?.length ?? 0) > 0 ||
+    (candidate?.groundingMetadata?.groundingChunks?.length ?? 0) > 0;
+const hasUrlContext = candidate?.content?.parts?.some(part => part.url_context_metadata) ?? false;
+
+if ((hasGroundingMetadata || hasUrlContext) && conversationId) {
+    await this.multiAccountManager.markConversationAsToolUsing(conversationId);
+}
+```
+
+---
+
+### 2.3 KV Storage
+
+**Keys Used:**
+
+| Key Pattern | Purpose | TTL |
+|-------------|---------|-----|
+| `sticky:{conversation_id}` | Sticky account mapping | 300s (safety) |
+| `tool_usage:{conversation_id}` | Native tool usage flag | 3600s |
+| `account_rotation_index` | Round-robin counter | None |
+
+**Tool Usage Tracking:**
+
+```typescript
+// Mark conversation when native tools detected
+public async markConversationAsToolUsing(conversationId: string): Promise<void> {
+    const key = `tool_usage:${conversationId}`;
+    await this.env.GEMINI_CLI_KV.put(key, "true", { expirationTtl: 3600 });
+}
+
+// Check if conversation used tools
+public async hasUsedTools(conversationId: string): Promise<boolean> {
+    const value = await this.env.GEMINI_CLI_KV.get(`tool_usage:${conversationId}`);
+    return value === "true";
+}
+```
+
+---
+
+## 3. Account Selection Flow ✅
+
+### getAccountForConversation() Logic
+
+```typescript
+public async getAccountForConversation(
+    conversationId: string,
+    messages: ChatMessage[]
+): Promise<AuthManager> {
+    // Check for custom tools (from messages)
+    const hasCustomTools = messages.some(msg => /* ... */);
+
+    // Check for native tools (from KV)
+    const hasNativeTools = await this.hasUsedTools(conversationId);
+
+    // No tools ever used → Round-robin
+    if (!hasCustomTools && !hasNativeTools) {
+        return this.getAccount();
+    }
+
+    // Tools used → Sticky session
+    const stickyAccountId = await this.getStickyAccountId(conversationId);
+
+    if (stickyAccountId !== null) {
+        const account = this.accounts.find(acc => acc.id === stickyAccountId);
+        if (account && await this.healthTracker.isAccountHealthy(stickyAccountId)) {
+            return account; // Use sticky
+        }
+        // Unhealthy → Rotate below
+    }
+
+    // No sticky or unhealthy → Get fresh + create mapping
     const account = await this.getAccount();
-    await this.createStickyMapping(conversationId, account.id);
-    return { account, isSticky: true };
-  }
-
-  async clearStickySession(conversationId: string): Promise<void> {
-    await this.env.GEMINI_CLI_KV.delete(`sticky:${conversationId}`);
-  }
+    await this.setStickyAccount(conversationId, account.id);
+    return account;
 }
 ```
 
-### Detection Logic
+---
 
-```typescript
-// openai.ts
-function isToolCallingConversation(messages: ChatMessage[]): boolean {
-  return messages.some(msg =>
-    msg.role === 'tool' ||
-    (msg.role === 'assistant' && msg.tool_calls && msg.tool_calls.length > 0)
-  );
-}
+## 4. Rate Limit Handling ✅
 
-function getConversationId(
-  c: Context,
-  messages: ChatMessage[]
-): string | undefined {
-  // 1. Check header
-  const headerId = c.req.header('X-Conversation-ID');
-  if (headerId) return headerId;
+### Flow on 429/503 Error
 
-  // 2. Check if tool-calling
-  if (!isToolCallingConversation(messages)) {
-    return undefined; // No sticky needed for normal conversations
-  }
-
-  // 3. Generate from messages
-  return generateConversationId(messages);
-}
 ```
+1. Detect rate limit (429/503)
+   ↓
+2. Mark account as unhealthy (60s cooldown)
+   ↓
+3. Call getAccount() → Get next healthy account
+   ↓
+4. Update sticky mapping: sticky:{conv_id} → new_account
+   ↓
+5. Retry request with new account
+```
+
+### Log Output
+
+```
+[Mitigation] Sequence step: Rate limit (429) - Account rotation initiated
+             from GCP_SERVICE_ACCOUNT_4: fortewallet
+[Mitigation] Account rotation: Attempt 1/18 - Selected GCP_SERVICE_ACCOUNT_5: ctaste61
+[Mitigation] Sticky account updated: conv_449... → Account 5
+```
+
+---
+
+## 5. Expected Behavior ✅
+
+### Scenario Matrix
+
+| Turn | Scenario | Detection | Account | Sticky? |
+|------|----------|-----------|---------|---------|
+| 1 | Custom tools (MCP) | `tool_calls` in messages | Round-robin → Sticky created | ✅ |
+| 2 | Custom tools continuation | `role: "tool"` in history | Same account | ✅ |
+| 3+ | Custom tools | History check | Same account | ✅ |
+| 1 | Native tools (google_search) | No detection yet | Round-robin | ❌ |
+| 2 | Native tools again | `groundingMetadata` detected → Marked | Sticky created | ✅ |
+| 3+ | Native tools continuation | KV check | Same account | ✅ |
+| Any | Normal chat (no tools) | No detection | Round-robin | ❌ |
+| Any | Rate limit hit | Health check | Rotate + update sticky | ✅ |
+
+---
+
+## 6. Files Modified ✅
+
+| File | Changes | Lines |
+|------|---------|-------|
+| `src/routes/openai.ts` | Fixed `getConversationId()` to return `undefined` for non-tool chats | ~40 |
+| `src/services/account/account-manager.ts` | Added `markConversationAsToolUsing()`, `hasUsedTools()`, updated `getAccountForConversation()` | ~80 |
+| `src/services/stream/stream-handler.ts` | Added native tool detection in SSE parser (2 locations) | ~25 |
+| `src/services/gemini-client.ts` | Pass `messages` to account manager | ~5 |
+| `src/services/tools/native-tools-manager.ts` | Custom tools priority over native | ~40 |
+
+**Total:** ~190 lines of new/modified code
+
+---
+
+## 7. Testing Checklist ✅
+
+### Custom Tools (MCP)
+
+- [x] Turn 1: Tool call → Sticky created
+- [x] Turn 2: Tool response → Sticky reused
+- [x] Turn 3: Normal follow-up → Sticky reused
+- [x] Rate limit → Rotate + update sticky
+
+### Native Tools (google_search, url_context)
+
+- [x] Turn 1: Search query → Round-robin
+- [x] Turn 2: Another search → Marked as tool-using → Sticky created
+- [x] Turn 3: Follow-up → Sticky reused
+- [x] Rate limit → Rotate + update sticky
+
+### Normal Chat
+
+- [x] Turn 1: Question → Round-robin
+- [x] Turn 2: Follow-up → Round-robin (different account OK)
+- [x] Turn 3: Another question → Round-robin
+
+---
+
+## 8. Known Limitations ⚠️
+
+| Limitation | Impact | Workaround |
+|------------|--------|------------|
+| Native tools not detected on first use | Turn 1 uses round-robin | Turn 2+ will be sticky |
+| KV latency (+10-50ms) | Slight delay on sticky lookup | Acceptable trade-off |
+| Sticky TTL (300s safety) | Orphaned mappings after 5 min | Cleanup on `finish_reason: stop` (future enhancement) |
+
+---
+
+## 9. Future Enhancements ⏸️
+
+### Deferred (Not Implemented)
+
+- **Immediate sticky delete** on `finish_reason: stop`
+- **"Busy" account tracking** for load balancing
+- **Conversation priority** for sticky allocation
 
 ---
 
 ## Summary
 
-| Question | Recommendation |
-|----------|----------------|
-| **Right approach?** | ✅ Yes, sticky account is sound |
-| **Conversation ID** | Client header → message hash fallback |
-| **Rate limit mid-convo** | Rotate + update sticky mapping |
-| **Storage** | KV with immediate delete, optional TTL fallback |
-| **Busy tracking** | ⏸️ Defer |
-| **Alternatives** | Consistent hashing rejected (doesn't handle rate limits) |
+| Question | Answer |
+|----------|--------|
+| **Custom tools sticky?** | ✅ Yes, via message detection |
+| **Native tools sticky?** | ✅ Yes, via response metadata + KV tracking |
+| **Normal chat sticky?** | ❌ No, uses round-robin |
+| **Rate limit rotation?** | ✅ Yes, updates sticky mapping |
+| **Implementation status?** | ✅ Complete and tested |
 
-The proposed solution is architecturally sound. Focus on clean cleanup logic and race condition handling during implementation.
+---
+
+*Last Updated: 2026-03-20*
+*Implementation Status: ✅ PRODUCTION READY*

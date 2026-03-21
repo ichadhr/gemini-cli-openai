@@ -214,6 +214,18 @@ export class StreamHandler {
 							const jsonData: GeminiResponse = JSON.parse(objectBuffer);
 							const candidate = jsonData.response?.candidates?.[0];
 
+							// Detect native tool usage (google_search OR url_context)
+							const hasGroundingMetadata =
+								(candidate?.groundingMetadata?.webSearchQueries?.length ?? 0) > 0 ||
+								(candidate?.groundingMetadata?.groundingChunks?.length ?? 0) > 0;
+							const hasUrlContext = candidate?.content?.parts?.some(part => part.url_context_metadata) ?? false;
+
+							if ((hasGroundingMetadata || hasUrlContext) && conversationId) {
+								// Mark this conversation as having used native tools
+								await this.multiAccountManager.markConversationAsToolUsing(conversationId);
+								console.log(`[NATIVE_TOOL] Detected native tool usage in conversation ${conversationId.substring(0, 8)}...: search=${hasGroundingMetadata}, url=${hasUrlContext}`);
+							}
+
 							if (candidate?.content?.parts) {
 								state = yield* this.sseParser.processCandidateParts(
 									candidate.content.parts,
@@ -246,6 +258,18 @@ export class StreamHandler {
 						try {
 							const jsonData: GeminiResponse = JSON.parse(objectBuffer);
 							const candidate = jsonData.response?.candidates?.[0];
+
+							// Detect native tool usage (google_search OR url_context)
+							const hasGroundingMetadata =
+								(candidate?.groundingMetadata?.webSearchQueries?.length ?? 0) > 0 ||
+								(candidate?.groundingMetadata?.groundingChunks?.length ?? 0) > 0;
+							const hasUrlContext = candidate?.content?.parts?.some(part => part.url_context_metadata) ?? false;
+
+							if ((hasGroundingMetadata || hasUrlContext) && conversationId) {
+								// Mark this conversation as having used native tools
+								await this.multiAccountManager.markConversationAsToolUsing(conversationId);
+								console.log(`[NATIVE_TOOL] Detected native tool usage in conversation ${conversationId.substring(0, 8)}...: search=${hasGroundingMetadata}, url=${hasUrlContext}`);
+							}
 
 							if (candidate?.content?.parts) {
 								state = yield* this.sseParser.processCandidateParts(
