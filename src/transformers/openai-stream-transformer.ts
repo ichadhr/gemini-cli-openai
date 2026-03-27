@@ -1,6 +1,7 @@
 import { StreamChunk, ReasoningData, GeminiFunctionCall, UsageData } from "../types";
 import { NativeToolResponse } from "../types/native-tools";
 import { OPENAI_CHAT_COMPLETION_OBJECT } from "../config";
+import { encodeSignatureInToolCallId } from "../helpers/thought-signature";
 
 // OpenAI API interfaces
 interface OpenAIToolCall {
@@ -118,7 +119,7 @@ export function createOpenAIStreamTransformer(model: string): TransformStream<St
 					if (isGeminiFunctionCall(chunk.data)) {
 						const toolData = chunk.data;
 						toolCallName = toolData.name;
-						toolCallId = `call_${crypto.randomUUID()}`;
+						toolCallId = encodeSignatureInToolCallId(toolData.thought_signature);
 						delta.tool_calls = [
 							{
 								index: 0,

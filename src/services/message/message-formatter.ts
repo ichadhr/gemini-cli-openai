@@ -1,13 +1,19 @@
-import { ChatMessage, MessageContent, GeminiFormattedMessage, GeminiPart } from '../../types';
-import { validateContent } from '../../utils/validation';
+import { ChatMessage, MessageContent, GeminiFormattedMessage, GeminiPart } from "../../types";
+import { validateContent } from "../../utils/validation";
+import { extractSignatureFromToolCallId } from "../../helpers/thought-signature";
 
 /**
  * Type guard to check if content is a text content object
  */
-export function isTextContent(content: MessageContent): content is { type: 'text'; text: string } {
-	return typeof content === 'object' && content !== null &&
-		'type' in content && content.type === 'text' &&
-		'text' in content && typeof content.text === 'string';
+export function isTextContent(content: MessageContent): content is { type: "text"; text: string } {
+	return (
+		typeof content === "object" &&
+		content !== null &&
+		"type" in content &&
+		content.type === "text" &&
+		"text" in content &&
+		typeof content.text === "string"
+	);
 }
 
 /**
@@ -57,16 +63,24 @@ export class MessageFormatter {
 						parsedArgs = JSON.parse(toolCall.function.arguments);
 					} catch (e: unknown) {
 						const errorMessage = e instanceof Error ? e.message : String(e);
-						throw new Error(
-							`Invalid JSON in tool arguments for function '${toolCall.function.name}': ${errorMessage}`
-						);
+						throw new Error(`Invalid JSON in tool arguments for function '${toolCall.function.name}': ${errorMessage}`);
 					}
-					parts.push({
+
+					const functionCallPart: GeminiPart = {
 						functionCall: {
 							name: toolCall.function.name,
 							args: parsedArgs
 						}
-					});
+					};
+
+					// Extract signature from tool_call.id or use thought_signature field
+					// This preserves the signature across multi-turn conversations
+					const signature = extractSignatureFromToolCallId(toolCall.id) || toolCall.thought_signature;
+					if (signature) {
+						functionCallPart.thoughtSignature = signature;
+					}
+
+					parts.push(functionCallPart);
 				}
 			}
 

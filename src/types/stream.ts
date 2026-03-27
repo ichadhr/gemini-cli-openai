@@ -5,6 +5,7 @@ import { NativeToolResponse } from "./native-tools";
 export interface GeminiFunctionCall {
 	name: string;
 	args: object;
+	thought_signature?: string; // Gemini 3 thinking models include this
 }
 
 // --- Usage and Reasoning Data Types ---

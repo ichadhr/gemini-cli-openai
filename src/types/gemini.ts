@@ -37,6 +37,7 @@ export interface StreamRequest {
 export interface GeminiPart {
 	text?: string;
 	thought?: boolean; // For real thinking chunks from Gemini
+	thoughtSignature?: string; // Gemini 3 thinking models include this in function calls
 	functionCall?: {
 		name: string;
 		args: object;

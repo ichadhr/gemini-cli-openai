@@ -77,7 +77,20 @@ export const geminiCliModels: Record<string, ModelInfo> = {
 		supportsPromptCache: false,
 		inputPrice: 0,
 		outputPrice: 0,
-		description: "Google's Gemini 3.1 Flash Lite Preview model via OAuth (free tier)",
+		description: "Google's Gemini 3.1 Flash Lite Preview model via OAuth (Code Assist API - may not be available)",
+		thinking: true
+	},
+	"gemini-3.1-flash-preview": {
+		maxTokens: 65536,
+		contextWindow: 1_048_576,
+		supportsImages: true,
+		supportsAudios: true,
+		supportsVideos: true,
+		supportsPdfs: true,
+		supportsPromptCache: false,
+		inputPrice: 0,
+		outputPrice: 0,
+		description: "Google's Gemini 3.1 Flash Preview model via OAuth (free tier)",
 		thinking: true
 	}
 };

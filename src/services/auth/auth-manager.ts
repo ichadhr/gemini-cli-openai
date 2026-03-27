@@ -127,38 +127,59 @@ export class AuthManager {
 	 * Refresh the OAuth token and cache it in KV storage.
 	 */
 	private async refreshAndCacheToken(refreshToken: string): Promise<void> {
-		console.log("Refreshing OAuth token...");
+		console.log("Refreshing OAuth token using refresh_token...");
 
-		const refreshResponse = await fetch(OAUTH_REFRESH_URL, {
-			method: "POST",
-			headers: {
-				"Content-Type": "application/x-www-form-urlencoded"
-			},
-			body: new URLSearchParams({
-				client_id: OAUTH_CLIENT_ID,
-				client_secret: OAUTH_CLIENT_SECRET,
-				refresh_token: refreshToken,
-				grant_type: "refresh_token"
-			})
-		});
+		try {
+			const refreshResponse = await fetch(OAUTH_REFRESH_URL, {
+				method: "POST",
+				headers: {
+					"Content-Type": "application/x-www-form-urlencoded"
+				},
+				body: new URLSearchParams({
+					client_id: OAUTH_CLIENT_ID,
+					client_secret: OAUTH_CLIENT_SECRET,
+					refresh_token: refreshToken,
+					grant_type: "refresh_token"
+				})
+			});
 
-		if (!refreshResponse.ok) {
-			const errorText = await refreshResponse.text();
-			console.error("Token refresh failed:", errorText);
-			throw new Error(`Token refresh failed: ${errorText}`);
+			if (!refreshResponse.ok) {
+				const errorText = await refreshResponse.text();
+				console.error("Token refresh failed:", refreshResponse.status, errorText);
+
+				// Provide helpful error messages based on common failure modes
+				if (refreshResponse.status === 400 && errorText.includes("invalid_grant")) {
+					throw new Error(
+						"Token refresh failed: refresh_token is invalid or revoked. Please re-authenticate with `gemini auth` and update GCP_SERVICE_ACCOUNT secret."
+					);
+				}
+				throw new Error(`Token refresh failed (${refreshResponse.status}): ${errorText}`);
+			}
+
+			const refreshData = (await refreshResponse.json()) as TokenRefreshResponse;
+
+			if (!refreshData.access_token) {
+				throw new Error("Token refresh response missing access_token");
+			}
+
+			this.accessToken = refreshData.access_token;
+
+			// Calculate expiry time (typically 1 hour from now), with fallback
+			const expiryTime = Date.now() + (refreshData.expires_in || 3600) * 1000;
+
+			console.log("Token refreshed successfully");
+			console.log(`New token expires in ${refreshData.expires_in || 3600} seconds`);
+
+			// Cache the new token in KV storage
+			await this.cacheTokenInKV(refreshData.access_token, expiryTime);
+		} catch (e: unknown) {
+			if (e instanceof Error && e.message.includes("Token refresh failed")) {
+				throw e; // Re-throw our custom errors
+			}
+			const errorMessage = e instanceof Error ? e.message : String(e);
+			console.error("Token refresh error:", errorMessage);
+			throw new Error(`Failed to refresh token: ${errorMessage}`);
 		}
-
-		const refreshData = (await refreshResponse.json()) as TokenRefreshResponse;
-		this.accessToken = refreshData.access_token;
-
-		// Calculate expiry time (typically 1 hour from now)
-		const expiryTime = Date.now() + refreshData.expires_in * 1000;
-
-		console.log("Token refreshed successfully");
-		console.log(`New token expires in ${refreshData.expires_in} seconds`);
-
-		// Cache the new token in KV storage
-		await this.cacheTokenInKV(refreshData.access_token, expiryTime);
 	}
 
 	/**

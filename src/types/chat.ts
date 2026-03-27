@@ -18,6 +18,10 @@ export interface ModelInfo {
 // --- Chat Completion Request Types ---
 export type EffortLevel = "none" | "low" | "medium" | "high";
 
+// Gemini 3 thinking levels — replaces thinkingBudget for Gemini 3 models
+// See: https://ai.google.dev/gemini-api/docs/thinking
+export type ThinkingLevel = "minimal" | "low" | "medium" | "high";
+
 export interface Tool {
 	type: "function";
 	function: {
@@ -77,6 +81,7 @@ export interface ToolCall {
 		name: string;
 		arguments: string;
 	};
+	thought_signature?: string; // Gemini 3 thinking models include this
 }
 
 export interface ChatMessage {

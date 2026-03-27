@@ -1,10 +1,4 @@
-import {
-	StreamChunk,
-	UsageData,
-	GeminiFunctionCall,
-	GeminiPart,
-	GeminiResponse
-} from "../../types";
+import { StreamChunk, UsageData, GeminiFunctionCall, GeminiPart, GeminiResponse } from "../../types";
 import { NativeToolsManager, CitationsProcessor } from "../tools";
 
 /**
@@ -182,6 +176,11 @@ export class SSEParser {
 					name: part.functionCall.name,
 					args: part.functionCall.args
 				};
+
+				// Gemini 3 thinking models include thoughtSignature in function calls
+				if (part.thoughtSignature) {
+					functionCallData.thought_signature = part.thoughtSignature;
+				}
 
 				yield {
 					type: "tool_code",

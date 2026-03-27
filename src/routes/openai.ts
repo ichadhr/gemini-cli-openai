@@ -70,9 +70,8 @@ function getConversationId(messages: ChatMessage[], headerId?: string): string |
 	}
 
 	// Priority 2: Check if this is a tool-calling conversation
-	const hasToolCalls = messages.some(msg =>
-		msg.role === "tool" ||
-		(msg.role === "assistant" && msg.tool_calls && msg.tool_calls.length > 0)
+	const hasToolCalls = messages.some(
+		(msg) => msg.role === "tool" || (msg.role === "assistant" && msg.tool_calls && msg.tool_calls.length > 0)
 	);
 
 	if (!hasToolCalls) {
@@ -98,7 +97,7 @@ function getConversationId(messages: ChatMessage[], headerId?: string): string |
 			// Use djb2 hash algorithm (consistent with account-manager)
 			let hash = 5381;
 			for (let i = 0; i < content.length; i++) {
-				hash = ((hash << 5) + hash) + content.charCodeAt(i);
+				hash = (hash << 5) + hash + content.charCodeAt(i);
 			}
 			const hashHex = (hash >>> 0).toString(16);
 			return `conv_${hashHex}`;
@@ -152,10 +151,12 @@ OpenAIRoute.post("/chat/completions", async (c) => {
 		};
 
 		// Handle effort level mapping to thinking_budget (check multiple locations for client compatibility)
+		// Gemini 3 uses thinkingLevel instead of thinkingBudget - skip this logic for Gemini 3
+		const isGemini3Model = model.includes("gemini-3");
 		const reasoning_effort =
 			body.reasoning_effort || body.extra_body?.reasoning_effort || body.model_params?.reasoning_effort;
-		if (reasoning_effort) {
-			includeReasoning = true; // Effort implies reasoning
+		if (reasoning_effort && !isGemini3Model) {
+			includeReasoning = true;
 			const isFlashModel = model.includes("flash");
 			switch (reasoning_effort) {
 				case "low":
@@ -172,6 +173,10 @@ OpenAIRoute.post("/chat/completions", async (c) => {
 					includeReasoning = false;
 					break;
 			}
+		}
+
+		if (reasoning_effort && isGemini3Model) {
+			includeReasoning = reasoning_effort !== "none";
 		}
 
 		const tools = body.tools;
@@ -216,10 +221,7 @@ OpenAIRoute.post("/chat/completions", async (c) => {
 
 			if (messagesWithMedia.length > 0) {
 				if (!isMediaTypeSupported(model, supportKey)) {
-					return c.json(
-						errors.invalidRequest(`Model '${model}' does not support ${name}.`),
-						400
-					);
+					return c.json(errors.invalidRequest(`Model '${model}' does not support ${name}.`), 400);
 				}
 
 				for (const msg of messagesWithMedia) {
@@ -287,9 +289,10 @@ OpenAIRoute.post("/chat/completions", async (c) => {
 					const geminiStream = geminiClient.streamContent(model, systemPrompt, otherMessages, {
 						includeReasoning,
 						thinkingBudget,
+						reasoning_effort,
 						tools,
 						tool_choice,
-						conversationId: isToolCalling ? conversationId : undefined, // Pass conversationId for sticky account
+						conversationId: isToolCalling ? conversationId : undefined,
 						...generationOptions
 					});
 
@@ -329,9 +332,10 @@ OpenAIRoute.post("/chat/completions", async (c) => {
 				const completion = await geminiClient.getCompletion(model, systemPrompt, otherMessages, {
 					includeReasoning,
 					thinkingBudget,
+					reasoning_effort,
 					tools,
 					tool_choice,
-					conversationId: isToolCalling ? conversationId : undefined, // Pass conversationId for sticky account
+					conversationId: isToolCalling ? conversationId : undefined,
 					...generationOptions
 				});
 
@@ -414,17 +418,11 @@ OpenAIRoute.post("/audio/transcriptions", async (c) => {
 
 		if (isVideo) {
 			if (!isMediaTypeSupported(model, "supportsVideos")) {
-				return c.json(
-					errors.invalidRequest(`Model '${model}' does not support video inputs.`),
-					400
-				);
+				return c.json(errors.invalidRequest(`Model '${model}' does not support video inputs.`), 400);
 			}
 		} else if (isAudio) {
 			if (!isMediaTypeSupported(model, "supportsAudios")) {
-				return c.json(
-					errors.invalidRequest(`Model '${model}' does not support audio inputs.`),
-					400
-				);
+				return c.json(errors.invalidRequest(`Model '${model}' does not support audio inputs.`), 400);
 			}
 		} else {
 			return c.json(

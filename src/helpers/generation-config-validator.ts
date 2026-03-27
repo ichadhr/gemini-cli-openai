@@ -3,9 +3,10 @@ import {
 	DEFAULT_THINKING_BUDGET,
 	DEFAULT_TEMPERATURE,
 	REASONING_EFFORT_BUDGETS,
-	GEMINI_SAFETY_CATEGORIES
+	GEMINI_SAFETY_CATEGORIES,
+	GEMINI3_EFFORT_TO_THINKING_LEVEL
 } from "../config";
-import { ChatCompletionRequest, Env, EffortLevel, SafetyThreshold } from "../types";
+import { ChatCompletionRequest, Env, EffortLevel, SafetyThreshold, ThinkingLevel } from "../types";
 import { NativeToolsConfiguration } from "../types/native-tools";
 
 type JsonValue = string | number | boolean | null | JsonValue[] | { [key: string]: JsonValue };
@@ -39,12 +40,51 @@ export class GenerationConfigValidator {
 	}
 
 	/**
+	 * Maps reasoning effort to a Gemini 3 thinkingLevel based on model type.
+	 *
+	 * Gemini 3 uses thinkingLevel instead of thinkingBudget. The two parameters
+	 * cannot be combined in the same request (returns 400).
+	 *
+	 * Supported levels per model:
+	 *   - Gemini 3 Pro:   "low", "high" (default: "high")
+	 *   - Gemini 3 Flash: "minimal", "low", "medium", "high" (default: "high")
+	 *
+	 * Note: Thinking cannot be fully disabled on Gemini 3. "minimal" (Flash only)
+	 * is the closest equivalent.
+	 */
+	static mapEffortToThinkingLevel(effort: EffortLevel, modelId: string): ThinkingLevel {
+		const isFlashModel = modelId.includes("flash");
+		const mapping = GEMINI3_EFFORT_TO_THINKING_LEVEL[effort];
+		return isFlashModel ? mapping.flash : mapping.pro;
+	}
+
+	/**
 	 * Type guard to check if a value is a valid EffortLevel.
 	 * @param value - The value to check
 	 * @returns True if the value is a valid EffortLevel
 	 */
 	static isValidEffortLevel(value: unknown): value is EffortLevel {
 		return typeof value === "string" && ["none", "low", "medium", "high"].includes(value);
+	}
+
+	/**
+	 * Creates a thinkingConfig object for Gemini 2.5 models (uses thinkingBudget).
+	 */
+	private static createThinkingConfig(
+		budget: number,
+		includeThoughts: boolean = false
+	): { thinkingBudget: number; includeThoughts: boolean } {
+		return { thinkingBudget: budget, includeThoughts };
+	}
+
+	/**
+	 * Creates a thinkingConfig object for Gemini 3 models (uses thinkingLevel).
+	 */
+	private static createGemini3ThinkingConfig(
+		level: ThinkingLevel,
+		includeThoughts: boolean = false
+	): { thinkingLevel: ThinkingLevel; includeThoughts: boolean } {
+		return { thinkingLevel: level, includeThoughts };
 	}
 
 	/**
@@ -175,7 +215,28 @@ export class GenerationConfigValidator {
 
 		const modelInfo = geminiCliModels[modelId];
 		const isThinkingModel = modelInfo?.thinking || false;
+		const isGemini3Model = modelId.includes("gemini-3");
 
+		// GEMINI 3 PATH: Uses thinkingLevel instead of thinkingBudget
+		// Using thinkingBudget with Gemini 3 causes HTTP 400
+		if (isGemini3Model) {
+			const reasoning_effort =
+				options.reasoning_effort || options.extra_body?.reasoning_effort || options.model_params?.reasoning_effort;
+
+			if (reasoning_effort && this.isValidEffortLevel(reasoning_effort)) {
+				const level = this.mapEffortToThinkingLevel(reasoning_effort, modelId);
+				generationConfig.thinkingConfig = this.createGemini3ThinkingConfig(level, reasoning_effort !== "none");
+				console.log(`[GenerationConfig] Gemini 3 thinkingLevel set to '${level}' for '${modelId}'`);
+			}
+			// If no reasoning_effort specified, don't include thinkingConfig (use model default: "high")
+
+			Object.keys(generationConfig).forEach(
+				(key) => generationConfig[key] === undefined && delete generationConfig[key]
+			);
+			return generationConfig;
+		}
+
+		// GEMINI 2.5 PATH: Uses thinkingBudget
 		if (isThinkingModel) {
 			let thinkingBudget = options.thinking_budget ?? DEFAULT_THINKING_BUDGET;
 
@@ -197,18 +258,15 @@ export class GenerationConfigValidator {
 
 			if (isRealThinkingEnabled && includeReasoning) {
 				// Enable thinking with validated budget
-				generationConfig.thinkingConfig = {
-					thinkingBudget: validatedBudget,
-					includeThoughts: true // Critical: This enables thinking content in response
-				};
+				generationConfig.thinkingConfig = this.createThinkingConfig(validatedBudget, true);
 				console.log(`[GenerationConfig] Real thinking enabled for '${modelId}' with budget: ${validatedBudget}`);
 			} else {
 				// For thinking models, always use validated budget (can't use 0)
 				// Control thinking visibility with includeThoughts instead
-				generationConfig.thinkingConfig = {
-					thinkingBudget: this.validateThinkingBudget(modelId, DEFAULT_THINKING_BUDGET),
-					includeThoughts: false // Disable thinking visibility in response
-				};
+				generationConfig.thinkingConfig = this.createThinkingConfig(
+					this.validateThinkingBudget(modelId, DEFAULT_THINKING_BUDGET),
+					false
+				);
 			}
 		}
 
@@ -259,8 +317,8 @@ export class GenerationConfigValidator {
 		tools: unknown[] | undefined;
 		toolConfig: unknown | undefined;
 	} {
-		console.log(`[INFO] Tool config:`, JSON.stringify(config, null, 2));
-		console.log(`[INFO] Options:`, JSON.stringify(options, null, 2));
+		// console.log(`[INFO] Tool config:`, JSON.stringify(config, null, 2));
+		// console.log(`[INFO] Options:`, JSON.stringify(options, null, 2));
 		if (config.useCustomTools && config.customTools && config.customTools.length > 0) {
 			const { tools, toolConfig } = this.createValidateTools(options);
 			return {
@@ -279,7 +337,7 @@ export class GenerationConfigValidator {
 				}
 				return tool;
 			});
-			console.log(`[INFO] Native tools config:`, JSON.stringify(nativeTools, null, 2));
+			// console.log(`[INFO] Native tools config:`, JSON.stringify(nativeTools, null, 2));
 			return {
 				tools: nativeTools,
 				toolConfig: undefined // Native tools don't use toolConfig in the same way

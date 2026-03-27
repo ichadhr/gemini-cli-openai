@@ -1,11 +1,4 @@
-import {
-	Env,
-	StreamChunk,
-	UsageData,
-	ChatMessage,
-	Tool,
-	ToolChoice
-} from "../types";
+import { Env, StreamChunk, UsageData, ChatMessage, Tool, ToolChoice, EffortLevel } from "../types";
 import { AuthManager } from "./auth";
 import { MultiAccountManager } from "./account";
 import { MessageFormatter, SSEParser, StreamHandler, ReasoningGenerator, NativeToolsManager } from "./";
@@ -84,7 +77,10 @@ export class GeminiApiClient {
 			throw new Error("Project ID discovery failed. Please set the GEMINI_PROJECT_ID environment variable.");
 		} catch (error: unknown) {
 			const errorMessage = error instanceof Error ? error.message : String(error);
-			console.error(`Failed to discover project ID for GCP_SERVICE_ACCOUNT_${authManager.id}: ${authManager.accountName} -`, errorMessage);
+			console.error(
+				`Failed to discover project ID for GCP_SERVICE_ACCOUNT_${authManager.id}: ${authManager.accountName} -`,
+				errorMessage
+			);
 			throw new Error(
 				"Could not discover project ID. Make sure you're authenticated and consider setting GEMINI_PROJECT_ID."
 			);
@@ -106,6 +102,7 @@ export class GeminiApiClient {
 		options?: {
 			includeReasoning?: boolean;
 			thinkingBudget?: number;
+			reasoning_effort?: EffortLevel;
 			tools?: Tool[];
 			tool_choice?: ToolChoice;
 			max_tokens?: number;
@@ -118,16 +115,19 @@ export class GeminiApiClient {
 			response_format?: {
 				type: "text" | "json_object";
 			};
-			conversationId?: string; // For sticky account mapping
+			conversationId?: string;
 		} & NativeToolsRequestParams
 	): AsyncGenerator<StreamChunk> {
 		// Get account ONCE for this request to ensure consistency
 		// Use sticky account if conversationId is provided (tool-calling mode)
-		const authManager = options?.conversationId && messages
-			? await this.multiAccountManager.getAccountForConversation(options.conversationId, messages)
-			: await this.multiAccountManager.getAccount();
+		const authManager =
+			options?.conversationId && messages
+				? await this.multiAccountManager.getAccountForConversation(options.conversationId, messages)
+				: await this.multiAccountManager.getAccount();
 		await authManager.initializeAuth();
-		console.log(`[Mitigation] Initial account selection: GCP_SERVICE_ACCOUNT_${authManager.id}: ${authManager.accountName}`);
+		console.log(
+			`[Mitigation] Initial account selection: GCP_SERVICE_ACCOUNT_${authManager.id}: ${authManager.accountName}`
+		);
 		const projectId = await this.discoverProjectId(authManager);
 
 		const contents = this.messageFormatter.formatMessages(systemPrompt, messages);
@@ -141,6 +141,7 @@ export class GeminiApiClient {
 
 		const req = {
 			thinking_budget: options?.thinkingBudget,
+			reasoning_effort: options?.reasoning_effort,
 			tools: options?.tools,
 			tool_choice: options?.tool_choice,
 			max_tokens: options?.max_tokens,
@@ -232,6 +233,7 @@ export class GeminiApiClient {
 		options?: {
 			includeReasoning?: boolean;
 			thinkingBudget?: number;
+			reasoning_effort?: EffortLevel;
 			tools?: Tool[];
 			tool_choice?: ToolChoice;
 			max_tokens?: number;
@@ -244,19 +246,13 @@ export class GeminiApiClient {
 			response_format?: {
 				type: "text" | "json_object";
 			};
-			conversationId?: string; // For sticky account mapping
+			conversationId?: string;
 		} & NativeToolsRequestParams
 	): Promise<{
 		content: string;
 		usage?: UsageData;
 		tool_calls?: Array<{ id: string; type: "function"; function: { name: string; arguments: string } }>;
 	}> {
-		return this.streamHandler.getCompletion(
-			this.streamContent.bind(this),
-			modelId,
-			systemPrompt,
-			messages,
-			options
-		);
+		return this.streamHandler.getCompletion(this.streamContent.bind(this), modelId, systemPrompt, messages, options);
 	}
 }

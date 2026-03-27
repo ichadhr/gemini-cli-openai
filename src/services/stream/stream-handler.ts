@@ -15,6 +15,7 @@ import { MessageFormatter } from "../message";
 import { SSEParser, parseSSEStream, ThinkingState } from "./sse-parser";
 import { NativeToolsManager, CitationsProcessor } from "../tools";
 import { AutoModelSwitchingHelper } from "../../helpers/auto-model-switching";
+import { encodeSignatureInToolCallId } from "../../helpers/thought-signature";
 import { CODE_ASSIST_ENDPOINT, CODE_ASSIST_API_VERSION } from "../../config";
 import { NativeToolsRequestParams } from "../../types/native-tools";
 
@@ -69,7 +70,9 @@ export class StreamHandler {
 		if (!response.ok) {
 			// Handle 401: Clear token and retry with SAME account (refresh token flow) if not already retried
 			if (response.status === 401 && !isRetry) {
-				console.log(`[Mitigation] Sequence step: 401 error - Token refresh for GCP_SERVICE_ACCOUNT_${authManager.id}: ${authManager.accountName}`);
+				console.log(
+					`[Mitigation] Sequence step: 401 error - Token refresh for GCP_SERVICE_ACCOUNT_${authManager.id}: ${authManager.accountName}`
+				);
 				await authManager.clearTokenCache();
 				await authManager.initializeAuth();
 				yield* this.performStreamRequest(
@@ -105,10 +108,7 @@ export class StreamHandler {
 
 					// NEW: Update sticky mapping if this is a tool-calling conversation
 					if (conversationId) {
-						await this.multiAccountManager.updateStickyAccount(
-							conversationId,
-							nextAuthManager.id
-						);
+						await this.multiAccountManager.updateStickyAccount(conversationId, nextAuthManager.id);
 					}
 
 					// If we switch accounts, we should probably check if project ID is different.
@@ -185,7 +185,7 @@ export class StreamHandler {
 
 			const errorText = await response.text();
 			console.error(`[GeminiAPI] Stream request failed: ${response.status}`, errorText);
-			console.error(`[DEBUG] Request payload:`, JSON.stringify(streamRequest, null, 2));
+			// console.error(`[DEBUG] Request payload:`, JSON.stringify(streamRequest, null, 2));
 			throw new Error(`Stream request failed: ${response.status}`);
 		}
 
@@ -201,6 +201,7 @@ export class StreamHandler {
 		let buffer = "";
 		let objectBuffer = "";
 		let lastFlushTime = Date.now();
+		let contentChunkCount = 0;
 
 		for await (const chunk of parseSSEStream(response.body)) {
 			buffer += chunk;
@@ -218,12 +219,14 @@ export class StreamHandler {
 							const hasGroundingMetadata =
 								(candidate?.groundingMetadata?.webSearchQueries?.length ?? 0) > 0 ||
 								(candidate?.groundingMetadata?.groundingChunks?.length ?? 0) > 0;
-							const hasUrlContext = candidate?.content?.parts?.some(part => part.url_context_metadata) ?? false;
+							const hasUrlContext = candidate?.content?.parts?.some((part) => part.url_context_metadata) ?? false;
 
 							if ((hasGroundingMetadata || hasUrlContext) && conversationId) {
 								// Mark this conversation as having used native tools
 								await this.multiAccountManager.markConversationAsToolUsing(conversationId);
-								console.log(`[NATIVE_TOOL] Detected native tool usage in conversation ${conversationId.substring(0, 8)}...: search=${hasGroundingMetadata}, url=${hasUrlContext}`);
+								console.log(
+									`[NATIVE_TOOL] Detected native tool usage in conversation ${conversationId.substring(0, 8)}...: search=${hasGroundingMetadata}, url=${hasUrlContext}`
+								);
 							}
 
 							if (candidate?.content?.parts) {
@@ -236,6 +239,7 @@ export class StreamHandler {
 									nativeToolsManager,
 									citationsProcessor
 								);
+								contentChunkCount++;
 							}
 
 							if (jsonData.response?.usageMetadata) {
@@ -263,12 +267,14 @@ export class StreamHandler {
 							const hasGroundingMetadata =
 								(candidate?.groundingMetadata?.webSearchQueries?.length ?? 0) > 0 ||
 								(candidate?.groundingMetadata?.groundingChunks?.length ?? 0) > 0;
-							const hasUrlContext = candidate?.content?.parts?.some(part => part.url_context_metadata) ?? false;
+							const hasUrlContext = candidate?.content?.parts?.some((part) => part.url_context_metadata) ?? false;
 
 							if ((hasGroundingMetadata || hasUrlContext) && conversationId) {
 								// Mark this conversation as having used native tools
 								await this.multiAccountManager.markConversationAsToolUsing(conversationId);
-								console.log(`[NATIVE_TOOL] Detected native tool usage in conversation ${conversationId.substring(0, 8)}...: search=${hasGroundingMetadata}, url=${hasUrlContext}`);
+								console.log(
+									`[NATIVE_TOOL] Detected native tool usage in conversation ${conversationId.substring(0, 8)}...: search=${hasGroundingMetadata}, url=${hasUrlContext}`
+								);
 							}
 
 							if (candidate?.content?.parts) {
@@ -281,6 +287,7 @@ export class StreamHandler {
 									nativeToolsManager,
 									citationsProcessor
 								);
+								contentChunkCount++;
 							}
 
 							if (jsonData.response?.usageMetadata) {
@@ -316,6 +323,7 @@ export class StreamHandler {
 						nativeToolsManager,
 						citationsProcessor
 					);
+					contentChunkCount++;
 				}
 
 				if (jsonData.response?.usageMetadata) {
@@ -328,6 +336,10 @@ export class StreamHandler {
 			} catch (e) {
 				console.error("Error parsing final SSE JSON object:", e);
 			}
+		}
+
+		if (contentChunkCount === 0) {
+			console.warn("[StreamHandler] Warning: Stream completed without any content chunks");
 		}
 	}
 
@@ -393,7 +405,7 @@ export class StreamHandler {
 				} else if (chunk.type === "tool_code" && typeof chunk.data === "object") {
 					const toolData = chunk.data as GeminiFunctionCall;
 					tool_calls.push({
-						id: `call_${crypto.randomUUID()}`,
+						id: encodeSignatureInToolCallId(toolData.thought_signature),
 						type: "function",
 						function: {
 							name: toolData.name,
