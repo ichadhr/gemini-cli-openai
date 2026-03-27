@@ -58,7 +58,9 @@ export class GeminiApiClient {
 		}
 
 		try {
-			const initialProjectId = "default-project";
+			// Use undefined to let the API determine the project context (matches official CLI behavior)
+			// https://github.com/google-gemini/gemini-cli/blob/9a8e5d3940f9465bb2e07dcf9c6b68e27bf1734e/packages/core/src/code_assist/setup.ts#L83
+			const initialProjectId = undefined;
 
 			const loadResponse = (await authManager.callEndpoint("loadCodeAssist", {
 				cloudaicompanionProject: initialProjectId,

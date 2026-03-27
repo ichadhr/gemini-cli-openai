@@ -1,7 +1,21 @@
 import { ModelInfo } from "../types";
 
 // --- Gemini CLI Models Configuration ---
+// models docs: https://ai.google.dev/gemini-api/docs/models?hl=en
 export const geminiCliModels: Record<string, ModelInfo> = {
+	"gemini-3.1-pro-preview": {
+		maxTokens: 65536,
+		contextWindow: 1_048_576,
+		supportsImages: true,
+		supportsAudios: true,
+		supportsVideos: true,
+		supportsPdfs: true,
+		supportsPromptCache: false,
+		inputPrice: 0,
+		outputPrice: 0,
+		description: "Google's Gemini 3.1 Pro Preview model via OAuth (free tier)",
+		thinking: true
+	},
 	"gemini-3-pro-preview": {
 		maxTokens: 65536,
 		contextWindow: 1_048_576,
@@ -65,19 +79,6 @@ export const geminiCliModels: Record<string, ModelInfo> = {
 		inputPrice: 0,
 		outputPrice: 0,
 		description: "Google's Gemini 2.5 Flash Lite model via OAuth (free tier)",
-		thinking: true
-	},
-	"gemini-3.1-flash-lite-preview": {
-		maxTokens: 65536,
-		contextWindow: 1_048_576,
-		supportsImages: true,
-		supportsAudios: true,
-		supportsVideos: true,
-		supportsPdfs: true,
-		supportsPromptCache: false,
-		inputPrice: 0,
-		outputPrice: 0,
-		description: "Google's Gemini 3.1 Flash Lite Preview model via OAuth (Code Assist API - may not be available)",
 		thinking: true
 	},
 	"gemini-3.1-flash-preview": {
