@@ -20,8 +20,15 @@ export function isTextContent(content: MessageContent): content is { type: "text
  * Formats chat messages into Gemini API compatible format.
  * Handles text content, tool calls, tool responses, images (URL and base64),
  * audio, video, and PDFs.
+ *
+ * Gemini API Requirements for tool calling:
+ * 1. functionResponse.name must be the FUNCTION NAME (not tool_call_id)
+ * 2. functionResponse.id must be the TOOL CALL ID (for matching)
+ * 3. Consecutive tool messages must be merged into one user message
  */
 export class MessageFormatter {
+	private toolCallIdToFunctionName: Map<string, string> = new Map();
+
 	/**
 	 * Converts a single message to Gemini format.
 	 * Role mapping: 'assistant' → 'model', 'user' → 'user'
@@ -30,13 +37,18 @@ export class MessageFormatter {
 		const role = msg.role === "assistant" ? "model" : "user";
 
 		// Handle tool call results (tool role in OpenAI format)
+		// Gemini requires: name = function name, id = tool call ID
 		if (msg.role === "tool") {
+			const toolCallId = msg.tool_call_id || "unknown";
+			const functionName = this.toolCallIdToFunctionName.get(toolCallId) || toolCallId;
+
 			return {
 				role: "user",
 				parts: [
 					{
 						functionResponse: {
-							name: msg.tool_call_id || "unknown_function",
+							name: functionName,
+							id: toolCallId,
 							response: {
 								result: typeof msg.content === "string" ? msg.content : JSON.stringify(msg.content)
 							}
@@ -55,7 +67,7 @@ export class MessageFormatter {
 				parts.push({ text: msg.content });
 			}
 
-			// Add function calls
+			// Add function calls and store tool_call_id → function_name mapping
 			for (const toolCall of msg.tool_calls) {
 				if (toolCall.type === "function") {
 					let parsedArgs: object;
@@ -64,6 +76,11 @@ export class MessageFormatter {
 					} catch (e: unknown) {
 						const errorMessage = e instanceof Error ? e.message : String(e);
 						throw new Error(`Invalid JSON in tool arguments for function '${toolCall.function.name}': ${errorMessage}`);
+					}
+
+					// Store mapping for later tool responses
+					if (toolCall.id) {
+						this.toolCallIdToFunctionName.set(toolCall.id, toolCall.function.name);
 					}
 
 					const functionCallPart: GeminiPart = {
@@ -196,9 +213,33 @@ export class MessageFormatter {
 	/**
 	 * Converts system prompt + messages to Gemini format.
 	 * System prompt becomes first message with role 'user'.
+	 *
+	 * Gemini API Requirements:
+	 * 1. functionResponse.name = function name, functionResponse.id = tool call ID
+	 * 2. Consecutive tool messages must be merged into one user message
 	 */
 	formatMessages(systemPrompt: string, messages: ChatMessage[]): GeminiFormattedMessage[] {
-		const formattedMessages = messages.map((msg) => this.formatMessage(msg));
+		// Clear mapping for each new conversation
+		this.toolCallIdToFunctionName.clear();
+
+		const formattedMessages: GeminiFormattedMessage[] = [];
+
+		for (const msg of messages) {
+			const formatted = this.formatMessage(msg);
+
+			// Merge consecutive tool messages into one Gemini user message
+			// Gemini requires: 2 functionCalls → 1 user message with 2 functionResponse parts
+			if (msg.role === "tool" && formattedMessages.length > 0) {
+				const lastMsg = formattedMessages[formattedMessages.length - 1];
+				// If last message is a tool response (user role with functionResponse), merge
+				if (lastMsg.role === "user" && lastMsg.parts.some((p) => p.functionResponse)) {
+					lastMsg.parts.push(...formatted.parts);
+					continue;
+				}
+			}
+
+			formattedMessages.push(formatted);
+		}
 
 		if (systemPrompt) {
 			formattedMessages.unshift({ role: "user", parts: [{ text: systemPrompt }] });

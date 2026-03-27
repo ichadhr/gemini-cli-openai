@@ -43,7 +43,8 @@ export interface GeminiPart {
 		args: object;
 	};
 	functionResponse?: {
-		name: string;
+		name: string; // Function name (e.g., "calculator")
+		id?: string; // Function call ID for matching (Gemini 3+ requirement)
 		response: {
 			result: string;
 		};
