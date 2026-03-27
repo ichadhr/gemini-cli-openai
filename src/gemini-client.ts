@@ -121,7 +121,9 @@ export class GeminiApiClient {
 		}
 
 		try {
-			const initialProjectId = "default-project";
+			// Use undefined to let the API determine the project context (matches official CLI behavior)
+			// https://github.com/google-gemini/gemini-cli/blob/9a8e5d3940f9465bb2e07dcf9c6b68e27bf1734e/packages/core/src/code_assist/setup.ts#L83
+			const initialProjectId = undefined;
 			const loadResponse = (await this.authManager.callEndpoint("loadCodeAssist", {
 				cloudaicompanionProject: initialProjectId,
 				metadata: { duetProject: initialProjectId }
@@ -365,6 +367,7 @@ export class GeminiApiClient {
 			response_format?: {
 				type: "text" | "json_object";
 			};
+			reasoning_effort?: "none" | "low" | "medium" | "high";
 		} & NativeToolsRequestParams
 	): AsyncGenerator<StreamChunk> {
 		await this.authManager.initializeAuth();
@@ -394,7 +397,8 @@ export class GeminiApiClient {
 			presence_penalty: options?.presence_penalty,
 			frequency_penalty: options?.frequency_penalty,
 			seed: options?.seed,
-			response_format: options?.response_format
+			response_format: options?.response_format,
+			reasoning_effort: options?.reasoning_effort
 		};
 
 		// Native tools integration
@@ -813,6 +817,7 @@ export class GeminiApiClient {
 			response_format?: {
 				type: "text" | "json_object";
 			};
+			reasoning_effort?: "none" | "low" | "medium" | "high";
 		} & NativeToolsRequestParams
 	): Promise<{
 		content: string;
